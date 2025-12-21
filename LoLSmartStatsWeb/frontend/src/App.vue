@@ -1,4 +1,5 @@
 <script setup lang="ts">
+<<<<<<< HEAD
 import HelloWorld from './components/HelloWorld.vue'
 </script>
 
@@ -26,5 +27,19 @@ import HelloWorld from './components/HelloWorld.vue'
 }
 .logo.vue:hover {
   filter: drop-shadow(0 0 2em #42b883aa);
+=======
+</script>
+
+<template>
+  <router-view />
+</template>
+
+<style>
+/* Global styles can go here if not in style.css */
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+>>>>>>> initialization_of_frontend
 }
 </style>

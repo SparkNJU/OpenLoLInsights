@@ -3,6 +3,13 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "types": ["vite/client"],
+<<<<<<< HEAD
+=======
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+>>>>>>> initialization_of_frontend
 
     /* Linting */
     "strict": true,
