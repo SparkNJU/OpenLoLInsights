@@ -1,10 +1,3 @@
-<<<<<<< HEAD
-import { createApp } from 'vue'
-import './style.css'
-import App from './App.vue'
-
-createApp(App).mount('#app')
-=======
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
@@ -26,4 +19,3 @@ app.use(router)
 app.use(ElementPlus)
 app.mount('#app')
 
->>>>>>> initialization_of_frontend
