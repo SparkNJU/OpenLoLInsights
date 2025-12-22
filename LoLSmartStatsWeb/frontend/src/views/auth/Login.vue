@@ -13,13 +13,15 @@ const form = reactive({
   password: ''
 })
 const handleLoginTemp = async () => {
-  if(form.email == 'admin123@example.com' && form.password == 'admin123'){
+  // 临时测试账号
+  if (form.email == 'test' && form.password == 'test') {
     // 伪造 token 以通过路由守卫
     localStorage.setItem('accessToken', 'temp-mock-token');
     ElMessage.success('登录成功')//提示
     router.push('/')
     return
   }
+  ElMessage.error('账号或密码错误')
 }
 // 后端实现后使用下面这个函数
 const handleLogin = async () => {
@@ -27,13 +29,13 @@ const handleLogin = async () => {
     ElMessage.warning('请输入邮箱和密码')
     return
   }
-  
+
   loading.value = true
   try {
     // 根据 API 文档: POST /api/v1/auth/login
     const res: any = await request.post('/auth/login', form)
     // res 结构: { user: {...}, tokens: { accessToken, refreshToken } }
-    
+
     if (res.tokens) {
       localStorage.setItem('accessToken', res.tokens.accessToken)
       localStorage.setItem('refreshToken', res.tokens.refreshToken)
@@ -75,44 +77,31 @@ const handleGuestAccess = () => {
         <h2 class="text-3xl font-bold text-gray-800 mb-2">欢迎回来</h2>
         <p class="text-gray-500 mb-8">请登录您的账户以继续</p>
 
-        <el-form :model="form" @keyup.enter="handleLoginTemp" size="large"> 
+        <el-form :model="form" @keyup.enter="handleLoginTemp" size="large">
           <!-- 后端实现之后修改成handleLogin -->
+          <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <p class="text-sm text-blue-600">测试账号：test / test</p>
+          </div>
           <el-form-item>
-            <el-input 
-              v-model="form.email" 
-              placeholder="邮箱地址" 
-              :prefix-icon="User" 
-            />
-          </el-form-item>
-          
-          <el-form-item>
-            <el-input 
-              v-model="form.password" 
-              type="password" 
-              placeholder="密码" 
-              :prefix-icon="Lock" 
-              show-password
-            />
+            <el-input v-model="form.email" placeholder="请输入测试账号: test" :prefix-icon="User" />
           </el-form-item>
 
-          <el-button 
-            type="primary" 
-            class="w-full !rounded-lg !h-12 !text-lg !font-medium mt-4" 
-            :loading="loading"
-            @click="handleLoginTemp"
-          >
+          <el-form-item>
+            <el-input v-model="form.password" type="password" placeholder="请输入测试密码: test" :prefix-icon="Lock"
+              show-password />
+          </el-form-item>
+
+          <el-button type="primary" class="w-full !rounded-lg !h-12 !text-lg !font-medium mt-4" :loading="loading"
+            @click="handleLoginTemp">
             登 录
           </el-button>
-          
-          <el-button 
-            class="w-full !rounded-lg !h-12 !text-lg !font-medium mt-3 !ml-0" 
-            @click="handleGuestAccess"
-          >
+
+          <el-button class="w-full !rounded-lg !h-12 !text-lg !font-medium mt-3 !ml-0" @click="handleGuestAccess">
             游客访问
           </el-button>
 
           <div class="mt-6 text-center text-gray-600">
-            还没有账号？ 
+            还没有账号？
             <router-link to="/register" class="text-blue-600 hover:underline font-medium">立即注册</router-link>
           </div>
         </el-form>
@@ -124,7 +113,3 @@ const handleGuestAccess = () => {
 <style scoped>
 /* Optional: Add custom animations or overrides */
 </style>
-
-
-
-

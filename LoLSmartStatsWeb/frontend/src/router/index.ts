@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import Layout from '../views/layout/Layout.vue';
 
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
