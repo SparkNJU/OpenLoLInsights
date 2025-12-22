@@ -2,7 +2,7 @@
 import { ref, reactive, nextTick, onMounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { Position, VideoPlay, RefreshRight, Document, ChatDotRound, UserFilled, PieChart } from '@element-plus/icons-vue'
+import { Position, VideoPlay, Plus, Document, ChatDotRound, UserFilled, PieChart } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import request from '../../utils/request'
 // 这里需要引入 ECharts 组件（稍后封装）
@@ -265,13 +265,13 @@ const handleSend = async () => {
 <template>
   <div class="flex h-full flex-col relative bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
     <!-- Header -->
-    <div class="h-14 border-b border-gray-100 flex items-center justify-between px-6 bg-white z-10">
-      <div class="flex items-center space-x-2">
-        <span class="font-bold text-gray-800">AI 分析会话</span>
-        <el-tag size="small" type="info" effect="plain">DeepSeek V3</el-tag>
+    <div class="h-20 border-b border-gray-100 flex items-center justify-between px-6 bg-white z-10">
+      <div class="flex items-center space-x-4">
+        <span class="font-bold text-2xl text-gray-800">AI 分析会话</span>
+        <el-tag size="large" type="info" effect="plain" class="text-lg py-2">DeepSeek V3</el-tag>
       </div>
-      <el-button link :icon="RefreshRight" @click="handleNewSession">
-        {{ isLoggedIn ? '新会话' : '清空对话' }}
+      <el-button link :icon="Plus" @click="handleNewSession" size="large" class="text-lg px-4 py-2">
+        新会话
       </el-button>
     </div>
 
