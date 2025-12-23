@@ -14,7 +14,10 @@ const isLoggedIn = ref(false)
 const sessions = ref<any[]>([])
 const editingSessionId = ref<string | null>(null)
 const editingSessionName = ref('')
-
+const originalEditingSessionName = ref('')
+const editContainer = ref<HTMLElement | null>(null)
+const hasInteractedInside = ref(false)
+// 加载会话
 const loadSessions = () => {
   const saved = localStorage.getItem('chat_sessions')
   if (saved) {
@@ -32,39 +35,56 @@ const loadSessions = () => {
     localStorage.setItem('chat_sessions', JSON.stringify(sessions.value))
   }
 }
-
+// 保存会话修改
 const saveSessions = () => {
   localStorage.setItem('chat_sessions', JSON.stringify(sessions.value))
   window.dispatchEvent(new Event('session-updated'))
 }
 
+// 进入编辑模式：设置当前会话与名称，并标记是否在容器内交互
 const startEditingSession = (sessionId: string, currentName: string) => {
   editingSessionId.value = sessionId
   editingSessionName.value = currentName
+  originalEditingSessionName.value = currentName
+  hasInteractedInside.value = false
 }
 
+// 保存重命名：增加校验空值与重名的逻辑，成功后写入本地并提示
 const saveSessionName = () => {
   if (!editingSessionId.value || !editingSessionName.value.trim()) {
     editingSessionId.value = null
     return
   }
 
+  const newName = editingSessionName.value.trim()
+  const duplicate = sessions.value.some(s => s.name === newName && s.id !== editingSessionId.value)
+  if (duplicate) {
+    ElMessage.error('名称已存在，不能重复命名')
+    editingSessionName.value = originalEditingSessionName.value
+    return
+  }
+
   const session = sessions.value.find(s => s.id === editingSessionId.value)
   if (session) {
-    session.name = editingSessionName.value.trim()
+    session.name = newName
     saveSessions()
     ElMessage.success('重命名成功')
   }
 
   editingSessionId.value = null
   editingSessionName.value = ''
+  originalEditingSessionName.value = ''
+  hasInteractedInside.value = false
 }
 
+// 取消编辑：退出编辑并重置相关状态
 const cancelEditing = () => {
   editingSessionId.value = null
   editingSessionName.value = ''
+  hasInteractedInside.value = false
 }
 
+// 删除会话：至少保留一个；若删除当前会话则跳转首个剩余会话
 const deleteSession = async (sessionId: string) => {
   if (sessions.value.length <= 1) {
     ElMessage.warning('至少需要保留一个会话')
@@ -96,10 +116,31 @@ const deleteSession = async (sessionId: string) => {
   }
 }
 
+// 会话更新事件处理：重新从本地存储加载会话列表
 const handleSessionUpdate = () => {
   loadSessions()
 }
 
+// 全局点击捕获：判断点击是否在编辑容器内，决定取消或保存
+const handleDocumentClick = (e: MouseEvent) => {
+  if (!editingSessionId.value) return
+  const elVal = editContainer.value as unknown as HTMLElement | HTMLElement[] | null
+  const el = Array.isArray(elVal) ? elVal[0] : elVal
+  if (!el) return
+  const path = (e as any).composedPath?.() as EventTarget[] | undefined
+  const isInside = path ? path.includes(el) : el.contains(e.target as Node)
+  if (isInside) {
+    hasInteractedInside.value = true
+    return
+  }
+  if (hasInteractedInside.value) {
+    saveSessionName()
+  } else {
+    cancelEditing()
+  }
+}
+
+// 组件挂载：初始化用户与会话，并注册事件监听
 onMounted(() => {
   const userData = localStorage.getItem('user')
   const token = localStorage.getItem('accessToken')
@@ -115,12 +156,18 @@ onMounted(() => {
 
   loadSessions()
   window.addEventListener('session-updated', handleSessionUpdate)
+  document.addEventListener('pointerdown', handleDocumentClick, true)
+  document.addEventListener('click', handleDocumentClick, true)
 })
 
+// 组件卸载：移除事件监听
 onUnmounted(() => {
   window.removeEventListener('session-updated', handleSessionUpdate)
+  document.removeEventListener('pointerdown', handleDocumentClick, true)
+  document.removeEventListener('click', handleDocumentClick, true)
 })
 
+// 退出登录：清空本地存储并跳转至登录页
 const handleLogout = () => {
   localStorage.clear()
   router.push('/login')
@@ -180,12 +227,13 @@ const handleLogout = () => {
             </div>
 
             <!-- Edit Mode -->
-            <div v-else class="flex items-center px-3 py-2 rounded-lg bg-blue-50">
+            <div v-else class="flex items-center px-3 py-2 rounded-lg bg-blue-50" ref="editContainer">
               <el-icon :size="20" class="mr-3 text-blue-600">
                 <ChatDotRound />
               </el-icon>
               <el-input v-model="editingSessionName" size="small" class="flex-1" @keyup.enter="saveSessionName"
-                @keyup.esc="cancelEditing" @blur="saveSessionName" />
+                @keyup.esc="cancelEditing" />
+              <el-button size="small" type="primary" class="!ml-2" @click="saveSessionName">保存</el-button>
             </div>
           </div>
         </template>

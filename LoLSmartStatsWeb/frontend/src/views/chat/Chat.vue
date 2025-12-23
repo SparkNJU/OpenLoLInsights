@@ -137,7 +137,7 @@ const scrollToBottom = async () => {
   }
 }
 
-// 开启新会话（并在左侧列表添加）
+// 开启新会话（并在右侧列表添加）
 const handleNewSession = () => {
   // 如果是未登录用户，仅清空当前屏幕
   if (!isLoggedIn.value) {
