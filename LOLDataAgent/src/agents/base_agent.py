@@ -1,8 +1,28 @@
-from langchain.agents import AgentExecutor, create_openai_tools_agent
+# from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from src.llms.qwen_llm import get_qwen_llm
 from src.memory.buffer_memory import get_buffer_memory
 from src.tools.tool_registry import get_all_tools
+try:
+    # 优先旧版/预期导入
+    from langchain.agents import AgentExecutor, create_openai_tools_agent
+except Exception:
+    AgentExecutor = None
+    create_openai_tools_agent = None
+    try:
+        # 新版可能把 AgentExecutor 放到子模块
+        from langchain.agents.agent import AgentExecutor
+    except Exception:
+        AgentExecutor = None
+    try:
+        # 新版常用的初始化接口
+        from langchain.agents import initialize_agent, AgentType
+        def create_openai_tools_agent(llm, tools, **kwargs):
+            # 返回与原来 create_openai_tools_agent 相似的 executor
+            return initialize_agent(tools, llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, **kwargs)
+    except Exception:
+        # 如果都不可用，保留 None，让后续报错更明确
+        create_openai_tools_agent = None
 
 class BaseAgent:
     def __init__(self, llm=None, tools=None):

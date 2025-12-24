@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.build/
+
+# Environments
+.venv/
+.env
+.env.*
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reports / data artifacts
+data/reports/*
+!.gitkeep
+
+# SQL dumps
+mysql_dump_batched.sql

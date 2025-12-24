@@ -14,79 +14,92 @@ LOLDataAgent/
 │   │   ├── base_agent.py  # 基础对话 Agent
 │   │   └── sql_agent.py   # SQL 数据查询 Agent
 │   ├── llms/              # LLM 模型封装
-│   │   ├── deepseek_llm.py
-│   │   └── qwen_llm.py
-│   ├── memory/            # 记忆模块
-│   └── tools/             # 工具集
-│       └── custom_tools/  # 自定义工具（如 RAG）
-├── main.py                 # 程序入口
-└── requirements.txt        # 项目依赖
-```
+## 🚀 快速开始（服务模式）
 
-## 🛠️ 环境准备
-
-- Python 3.8 或更高版本
-- MySQL 数据库（用于 SQL Agent 功能）
-
-## 🚀 快速开始
-
-### 1. 安装依赖
-
-建议使用虚拟环境管理项目依赖：
+1) 创建并激活虚拟环境并安装依赖
 
 ```bash
-# 创建虚拟环境
-python -m venv venv
-
-# 激活虚拟环境 (Windows)
-.\venv\Scripts\activate
-
-# 激活虚拟环境 (Linux/macOS)
-source venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
+# Windows (PowerShell)
+python -m venv .venv
+./.venv/Scripts/Activate.ps1
+python -m pip install -U pip setuptools wheel
+python -m pip install -r requirements.txt
 ```
 
-### 2. 配置环境变量
-
-在 `config` 目录下，将 `.env.example` 复制为 `.env`，并填入你的 API Key 和数据库配置：
+2) 配置环境变量
 
 ```bash
 cd config
-cp .env.example .env
+copy .env.example .env   # Linux/macOS 用 cp
 ```
 
-编辑 `config/.env` 文件：
-
-```ini
-# Qwen Configuration (通义千问)
-QWEN_API_KEY=your_qwen_api_key_here
-QWEN_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
-
-# DeepSeek Configuration (DeepSeek)
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
-DEEPSEEK_API_BASE=https://api.deepseek.com
-
-# Database Configuration (MySQL)
-DB_USER=root
-DB_PASSWORD=your_password
+填写至少：
+```
+QWEN_API_KEY=your_qwen_key           # 兼容模式：dashscope aliyun
+SERPER_API_KEY=your_serper_key       # Web 搜索
+DB_USER=... / DB_PASSWORD=...        # MySQL 账号
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=lol_data
 ```
 
-### 3. 运行程序
+3) 启动 FastAPI
 
-回到 `LOLDataAgent` 根目录并运行 `main.py`：
+```bash
+uvicorn src.server:app --host 0.0.0.0 --port 8000 --reload
+```
+
+4) 本地自测
+
+- 浏览器访问主页测试页：http://localhost:8000/
+- 健康检查：http://localhost:8000/api/v1/ai/health
+- 工具列表：http://localhost:8000/api/v1/ai/tools
+- 流式 SSE（Orchestrator）：
+	```bash
+	curl -N -X POST http://localhost:8000/api/v1/ai/chat/stream \
+		-H "Content-Type: application/json" \
+		-d '{"mode":"simple","query":"亚索的背景故事是什么？"}'
+	```
+- 非流式 JSON：
+	```bash
+	curl -X POST http://localhost:8000/api/v1/ai/chat/query \
+		-H "Content-Type: application/json" \
+		-d '{"mode":"report","query":"2024 世界赛决赛经济差分析"}'
+	```
+- 下载报告（report 模式生成的 fileId）：
+	```bash
+	curl -O http://localhost:8000/api/v1/ai/files/<fileId>
+	```
+
+5) 可选：演示脚本
 
 ```bash
 python main.py
 ```
+用于 CLI 体验 BaseAgent / SQLAgent（需配置 API Key 和数据库）。
 
-程序启动后，将自动演示以下功能：
-1. **Base Agent**: 使用 RAG 工具回答关于英雄背景故事的问题（例如：“亚索的背景故事是什么？”）。
-2. **SQL Agent**: 连接数据库查询统计数据（例如：“查询数据库中有多少个英雄？”）。
+## 🌐 路由速览
+
+- `GET /api/v1/ai/health` 健康检查
+- `GET /api/v1/ai/tools` 工具名称列表
+- `POST /api/v1/ai/chat/stream` SSE 流式问答（事件：meta/data/token/file_meta/done）
+- `POST /api/v1/ai/chat/query` 非流式问答
+- `GET /api/v1/ai/files/{fileId}` 下载报告文件
+- `GET /` 内置测试页面（简单前端调试）
+	-d '{"agent":"orchestrator","mode":"report","query":"2024 世界赛决赛经济差分析"}'
+```
+
+**下载生成的报告文件**
+```bash
+curl -O http://localhost:8000/api/v1/ai/files/<fileId>
+```
+
+### 5) 可选：直接运行演示脚本
+
+```bash
+python main.py
+```
+将演示 BaseAgent / SQLAgent 的基础调用（需要对应的 API Key 和数据库）。
 
 ## ⚠️ 注意事项
 

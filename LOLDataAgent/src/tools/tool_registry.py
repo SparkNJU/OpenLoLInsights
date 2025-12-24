@@ -1,4 +1,6 @@
 from src.tools.custom_tools.rag_tool import rag_search
+from src.tools.custom_tools.db_tool import db_query
+from src.tools.custom_tools.serper_tool import serper_search
 
 def get_all_tools():
     """
@@ -6,5 +8,6 @@ def get_all_tools():
     """
     return [
         rag_search,
-        # 在这里添加更多工具
+        db_query,
+        serper_search,
     ]

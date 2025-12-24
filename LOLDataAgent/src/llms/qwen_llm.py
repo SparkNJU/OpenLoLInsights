@@ -1,7 +1,7 @@
 from langchain_openai import ChatOpenAI
 from config.settings import settings
 
-def get_qwen_llm(temperature=0.7, model_name="qwen-plus"):
+def get_qwen_llm(temperature=0.7, model_name="qwen3-235b-a22b-instruct-2507"):
     """
     获取通义千问 LLM 实例
     """
