@@ -1,134 +1,192 @@
 <script setup lang="ts">
-import { ref, reactive, nextTick, onMounted, watch, computed } from 'vue'
+import { ref, reactive, nextTick, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { Position, VideoPlay, Plus, Document, ChatDotRound, UserFilled, PieChart } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { 
+  Position, Plus, Document, ChatDotRound, UserFilled, PieChart, 
+  Edit, Delete, Search, Message as MessageIcon , Clock
+} from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
-// 这里需要引入 ECharts 组件（稍后封装）
 
+// --- 类型定义 ---
 interface Message {
-  role: 'user' | 'assistant' // 消息角色，用户或助手
-  content: string // 消息内容
-  loading?: boolean // AI是否在加载
-  dataRefs?: any[] // 关联的数据图表 ID
-  ts?: string // 时间戳
+  role: 'user' | 'assistant'
+  content: string
+  loading?: boolean
+  dataRefs?: any[]
+  ts?: string
+}
+
+interface ChatSession {
+  id: string
+  name: string
 }
 
 const route = useRoute()
 const router = useRouter()
 
-const messages = ref<Message[]>([{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。你可以问我关于比赛胜负、选手数据或战队对比的问题。' }])
+// --- 状态管理 ---
+// 1. 聊天相关
+const messages = ref<Message[]>([])
 const userInput = ref('')
 const loading = ref(false)
 const showContext = ref(false)
+const chatContainer = ref<HTMLElement | null>(null)
+const isSidebarOpen = ref(false) 
+
+// 2. 会话管理相关 (从 Layout 移入)
+const sessions = ref<ChatSession[]>([])
+const currentSessionId = ref<string | null>(null)
+const editingSessionId = ref<string | null>(null)
+const editingSessionName = ref('')
+const originalEditingSessionName = ref('')
+const editContainer = ref<HTMLElement | null>(null)
+const hasInteractedInside = ref(false)
+
+// 3. 用户/权限相关
 const isLoggedIn = ref(false)
 const guestLimit = 5
 const guestCount = ref(0)
-const currentSessionId = ref<string | null>(null)
-
-// 计算是否禁用发送按钮
 const isSendDisabled = computed(() => {
-  // AI正在回复，禁止使用发送按钮
   if (loading.value) return true
-  // 输入为空
   if (!userInput.value.trim()) return true
-  // 未登录且达到上限
   if (!isLoggedIn.value && guestCount.value >= guestLimit) return true
   return false
 })
 
-// 筛选上下文
+// 4. 上下文筛选
 const context = reactive({
   tournamentId: '2024-worlds',
   dateRange: [] as string[],
   teamIds: [] as string[],
   patch: ''
 })
-
-// 模拟选项数据
 const options = reactive({
   tournaments: [{ label: 'Worlds 2024', value: '2024-worlds' }],
   teams: [{ label: 'T1', value: 'T1' }, { label: 'BLG', value: 'BLG' }],
   patches: ['14.18', '14.19']
 })
 
-const chatContainer = ref<HTMLElement | null>(null)
+// 5.切换侧边栏状态
+// 切换侧边栏状态
+const toggleSidebar = () => {
+  isSidebarOpen.value = !isSidebarOpen.value
+}
 
-// 加载历史消息
-const fetchHistory = async () => {
-  if (!currentSessionId.value) return
-  
-  // 重置消息
-  messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。你可以问我关于比赛胜负、选手数据或战队对比的问题。' }]
-
-  try {
-    const res: any = await request.post('/chat/history', {
-      sessionId: currentSessionId.value,
-      page: 1,
-      pageSize: 50
-    })
-    
-    if (res && res.items && Array.isArray(res.items) && res.items.length > 0) {
-      // 转换历史消息格式
-      const history = res.items.reverse().map((item: any) => ({
-        role: item.role,
-        content: item.content,
-        ts: item.ts,
-        dataRefs: item.dataRefs
-      }))
-      messages.value = history
-      scrollToBottom()
-    }
-  } catch (err) {
-    console.error('Failed to fetch history:', err)
+// 点击外部区域关闭侧边栏
+const closeSidebar = () => {
+  if (isSidebarOpen.value) {
+    isSidebarOpen.value = false
   }
 }
 
-// 监听路由参数变化，切换会话
-watch(() => route.query.sessionId, (newId) => {
-  if (newId) {
-    currentSessionId.value = newId as string
-    localStorage.setItem('currentSessionId', newId as string)
-    if (isLoggedIn.value) {
-      fetchHistory()
-    } else {
-       // 未登录用户，如果是切换到不同会话，也重置消息（虽然未登录通常不持久化多会话，但为了UI一致性）
-       messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。你可以问我关于比赛胜负、选手数据或战队对比的问题。' }]
-    }
-  }
-}, { immediate: true })
 
-onMounted(() => {
-  const token = localStorage.getItem('accessToken')
-  isLoggedIn.value = !!token
-  
-  if (!isLoggedIn.value) {
-    const count = localStorage.getItem('guest_chat_count')
-    guestCount.value = count ? parseInt(count) : 0
-  }
-  
-  // 初始化 sessionId
-  if (!route.query.sessionId) {
-    // 如果没有 sessionId，检查 localStorage 或使用默认
-    const saved = localStorage.getItem('chat_sessions')
-    if (saved) {
-        try {
-            const sessions = JSON.parse(saved)
-            if (sessions.length > 0) {
-                router.replace({ query: { sessionId: sessions[0].id } })
-            } else {
-                // Should be handled by Layout, but just in case
-                router.replace({ query: { sessionId: 'default' } })
-            }
-        } catch(e) {
-            router.replace({ query: { sessionId: 'default' } })
-        }
-    } else {
-        router.replace({ query: { sessionId: 'default' } })
+// --- 逻辑方法：会话管理 (CRUD) ---
+
+// 加载本地会话列表
+const loadSessions = () => {
+  const saved = localStorage.getItem('chat_sessions')
+  if (saved) {
+    try {
+      sessions.value = JSON.parse(saved)
+    } catch (e) {
+      sessions.value = []
     }
   }
-})
+  // 如果没有会话且已登录，创建一个默认的
+  if (sessions.value.length === 0 && isLoggedIn.value) {
+    // 可以在这里静默创建，或者等用户发第一条消息时创建
+  }
+}
+
+// 保存会话列表
+const saveSessions = () => {
+  localStorage.setItem('chat_sessions', JSON.stringify(sessions.value))
+}
+
+// 开启重命名
+const startEditingSession = (sessionId: string, currentName: string) => {
+  editingSessionId.value = sessionId
+  editingSessionName.value = currentName
+  originalEditingSessionName.value = currentName
+  hasInteractedInside.value = false
+}
+
+// 保存重命名
+const saveSessionName = () => {
+  if (!editingSessionId.value || !editingSessionName.value.trim()) {
+    editingSessionId.value = null
+    return
+  }
+  const newName = editingSessionName.value.trim()
+  const duplicate = sessions.value.some(s => s.name === newName && s.id !== editingSessionId.value)
+  if (duplicate) {
+    ElMessage.error('名称已存在')
+    editingSessionName.value = originalEditingSessionName.value
+    return
+  }
+  const session = sessions.value.find(s => s.id === editingSessionId.value)
+  if (session) {
+    session.name = newName
+    saveSessions()
+    ElMessage.success('重命名成功')
+  }
+  cancelEditing()
+}
+
+// 取消编辑
+const cancelEditing = () => {
+  editingSessionId.value = null
+  editingSessionName.value = ''
+  hasInteractedInside.value = false
+}
+
+// 删除会话
+const deleteSession = async (sessionId: string) => {
+  try {
+    await ElMessageBox.confirm('确定要删除这个会话吗？', '提示', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    const index = sessions.value.findIndex(s => s.id === sessionId)
+    if (index !== -1) {
+      sessions.value.splice(index, 1)
+      saveSessions()
+      // 如果删除的是当前选中的
+      if (currentSessionId.value === sessionId) {
+        if (sessions.value.length > 0) {
+          router.push({ query: { sessionId: sessions.value[0].id } })
+        } else {
+          // 清空当前界面并移除ID
+          currentSessionId.value = null
+          messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
+          router.replace({ query: {} })
+        }
+      }
+      ElMessage.success('删除成功')
+    }
+  } catch { }
+}
+
+// 全局点击处理（用于点击外部取消编辑）
+const handleDocumentClick = (e: MouseEvent) => {
+  if (!editingSessionId.value) return
+  const elVal = editContainer.value as unknown as HTMLElement | null
+  if (!elVal) return
+  const path = (e as any).composedPath?.() as EventTarget[] | undefined
+  const isInside = path ? path.includes(elVal) : elVal.contains(e.target as Node)
+  
+  if (isInside) {
+    hasInteractedInside.value = true
+    return
+  }
+  // 点击外部：如果没有交互过直接取消，交互过可以尝试保存(或者也取消，看需求，这里选取消更安全)
+  cancelEditing()
+}
+
+// --- 逻辑方法：聊天交互 ---
 
 const scrollToBottom = async () => {
   await nextTick()
@@ -137,46 +195,63 @@ const scrollToBottom = async () => {
   }
 }
 
-// 开启新会话（并在右侧列表添加）
+// 加载特定会话的历史消息
+const fetchHistory = async () => {
+  if (!currentSessionId.value) return
+  messages.value = [{ role: 'assistant', content: '正在加载历史记录...' }]
+  try {
+    const res: any = await request.post('/chat/history', {
+      sessionId: currentSessionId.value,
+      page: 1,
+      pageSize: 50
+    })
+    
+    if (res && res.items && Array.isArray(res.items)) {
+      if(res.items.length > 0) {
+         const history = res.items.reverse().map((item: any) => ({
+          role: item.role,
+          content: item.content,
+          ts: item.ts,
+          dataRefs: item.dataRefs
+        }))
+        messages.value = history
+      } else {
+        // 新会话
+        messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
+      }
+      scrollToBottom()
+    }
+  } catch (err) {
+    console.error(err)
+    messages.value = [{ role: 'assistant', content: '加载历史记录失败。' }]
+  }
+}
+
+// 创建新会话
 const handleNewSession = () => {
-  // 如果是未登录用户，仅清空当前屏幕
   if (!isLoggedIn.value) {
-    messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。你可以问我关于比赛胜负、选手数据或战队对比的问题。' }]
+    messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
     currentSessionId.value = null
-    // 移除 URL 中的 sessionId 参数（如果有）
     router.replace({ query: {} })
     return
   }
 
   const newId = Date.now().toString()
+  const newSessionName = `新的对话 ${sessions.value.length + 1}`
+  sessions.value.unshift({ id: newId, name: newSessionName }) // 加到最前
+  saveSessions()
   
-  // 更新 localStorage 中的会话列表
-  const saved = localStorage.getItem('chat_sessions')
-  let sessions = []
-  try {
-    sessions = saved ? JSON.parse(saved) : []
-  } catch (e) {
-    sessions = []
-  }
-  
-  const newSessionName = `AI 问答助手 ${sessions.length + 1}`
-  sessions.push({ id: newId, name: newSessionName })
-  localStorage.setItem('chat_sessions', JSON.stringify(sessions))
-  
-  // 触发事件通知 Layout 更新
-  window.dispatchEvent(new Event('session-updated'))
-  
-  // 跳转到新会话
   router.push({ query: { sessionId: newId } })
 }
 
+// 发送消息
 const handleSend = async () => {
   if (!userInput.value.trim() || loading.value) return
   
-  // 检查未登录用户的限制
+  // 未登录限制
   if (!isLoggedIn.value) {
     if (guestCount.value >= guestLimit) {
-        ElMessage.warning('您已达到未登录用户的提问次数上限。请登录以继续使用完整功能。')
+        ElMessage.warning('请登录以继续使用完整功能。')
         return
     }
     guestCount.value++
@@ -186,32 +261,25 @@ const handleSend = async () => {
   const content = userInput.value
   userInput.value = ''
   
-  // 1. 添加用户消息
   messages.value.push({ role: 'user', content })
   scrollToBottom()
   
-  // 2. 准备 AI 消息占位
   const aiMsgIndex = messages.value.length
   messages.value.push({ role: 'assistant', content: '', loading: true })
   loading.value = true
 
-  // 3. 发起 SSE 请求
   const token = localStorage.getItem('accessToken')
   const ctrl = new AbortController()
   
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
 
   try {
     await fetchEventSource('/api/v1/chat/stream', {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({
-        sessionId: currentSessionId.value, // 如果为空，后端会创建新会话并在 meta 中返回
+        sessionId: currentSessionId.value, 
         message: content,
         mode: 'data+analysis',
         context: {
@@ -224,14 +292,21 @@ const handleSend = async () => {
       signal: ctrl.signal,
       onopen(response) {
         if (response.ok) return Promise.resolve()
-        throw new Error(`Failed to send message: ${response.status}`)
+        throw new Error(`Error: ${response.status}`)
       },
       onmessage(msg) {
         if (msg.event === 'meta') {
             const data = JSON.parse(msg.data)
-            if (data.sessionId) {
+            // 如果后端返回了新的 sessionId (冷启动会话)，更新本地
+            if (data.sessionId && data.sessionId !== currentSessionId.value) {
                 currentSessionId.value = data.sessionId
-                localStorage.setItem('currentSessionId', data.sessionId)
+                // 如果当前列表里没有这个ID（意味着是第一次自动创建），需要加进去
+                if (isLoggedIn.value && !sessions.value.find(s => s.id === data.sessionId)) {
+                    sessions.value.unshift({ id: data.sessionId, name: data.title || '新对话' })
+                    saveSessions()
+                    // 更新 URL 但不刷新
+                    router.replace({ query: { sessionId: data.sessionId } })
+                }
             }
         } else if (msg.event === 'token') {
           const data = JSON.parse(msg.data)
@@ -239,7 +314,6 @@ const handleSend = async () => {
           scrollToBottom()
         } else if (msg.event === 'data') {
           const data = JSON.parse(msg.data)
-          // 处理图表数据，挂载到当前消息或全局状态
           if (!messages.value[aiMsgIndex].dataRefs) messages.value[aiMsgIndex].dataRefs = []
           messages.value[aiMsgIndex].dataRefs?.push(data)
         } else if (msg.event === 'done') {
@@ -249,153 +323,239 @@ const handleSend = async () => {
             throw new Error(msg.data)
         }
       },
-      onerror(err) {
-        throw err
-      }
+      onerror(err) { throw err }
     })
   } catch (err) {
     console.error(err)
-    messages.value[aiMsgIndex].content += '\n[网络错误或请求失败]'
+    messages.value[aiMsgIndex].content += '\n[请求出错]'
     loading.value = false
     messages.value[aiMsgIndex].loading = false
   }
 }
+
+// --- 生命周期与监听 ---
+
+watch(() => route.query.sessionId, (newId) => {
+  currentSessionId.value = (newId as string) || null
+  if (isLoggedIn.value && currentSessionId.value) {
+    fetchHistory()
+  } else if (!currentSessionId.value) {
+    // 重置到初始状态
+    messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
+  }
+}, { immediate: true })
+
+onMounted(() => {
+  const token = localStorage.getItem('accessToken')
+  isLoggedIn.value = !!token
+  if (!isLoggedIn.value) {
+    const count = localStorage.getItem('guest_chat_count')
+    guestCount.value = count ? parseInt(count) : 0
+  }
+  
+  loadSessions()
+  document.addEventListener('pointerdown', handleDocumentClick, true)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', handleDocumentClick, true)
+})
 </script>
 
 <template>
-  <div class="flex h-full flex-col relative bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-    <!-- Header -->
-    <div class="h-20 border-b border-gray-100 flex items-center justify-between px-6 bg-white z-10">
-      <div class="flex items-center space-x-4">
-        <span class="font-bold text-2xl text-gray-800">AI 分析会话</span>
-        <el-tag size="large" type="info" effect="plain" class="text-lg py-2">DeepSeek V3</el-tag>
-      </div>
-      <el-button link :icon="Plus" @click="handleNewSession" size="large" class="text-lg px-4 py-2">
-        新会话
-      </el-button>
-    </div>
-
-    <!-- Chat Area -->
-    <div ref="chatContainer" class="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/50">
-      <div v-for="(msg, idx) in messages" :key="idx" 
-        class="flex w-full" 
-        :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
-      >
-        <div class="flex max-w-[80%] md:max-w-[70%]">
-          <!-- Avatar (Assistant) -->
-          <div v-if="msg.role === 'assistant'" class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center mr-3 flex-shrink-0 text-blue-600 mt-1">
-            <el-icon><ChatDotRound /></el-icon>
-          </div>
-
-          <!-- Bubble -->
-          <div 
-            class="p-4 rounded-2xl shadow-sm text-sm leading-relaxed whitespace-pre-wrap break-words"
-            :class="[
-              msg.role === 'user' 
-                ? 'bg-blue-600 text-white rounded-br-none' 
-                : 'bg-white border border-gray-100 text-gray-800 rounded-bl-none'
-            ]"
-          >
-            {{ msg.content }}
-            <span v-if="msg.loading" class="inline-block w-2 h-4 ml-1 bg-blue-400 animate-pulse align-middle"></span>
+  <div class="flex h-full w-full bg-white">
+    
+    <!-- 1. 左侧：聊天主界面 -->
+    <!-- [修改点] 添加 @click="closeSidebar"：点击主界面的任何地方都会尝试关闭侧边栏 -->
+    <div 
+      class="flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300"
+      @click="closeSidebar"
+    >
+      
+      <!-- Header -->
+      <div class="flex-none bg-white border-b border-gray-100 px-8 py-5 flex items-center justify-between shrink-0 z-10">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800 tracking-tight flex items-center gap-3">
+            <span class="w-1.5 h-7 bg-blue-600 rounded-full inline-block shadow-sm shadow-blue-200"></span>
+            AI 分析会话
+          </h2>
+          <p class="text-gray-500 text-sm mt-1.5 ml-5 flex items-center gap-2">
+            DeepSeek V3 驱动 · 沉浸式赛事数据智能问答
+            <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+          </p>
+        </div>
+        
+        <!-- [修改点] 右侧按钮：改为更显眼的文字按钮 -->
+        <!-- 使用 @click.stop 防止点击按钮本身触发外层的 closeSidebar -->
+        <div class="flex items-center gap-4">
+            <span class="hidden lg:block text-xs font-mono text-gray-300 mr-2">Model: deepseek-chat-v3</span>
             
-            <!-- Data Visualization Attachments -->
-            <div v-if="msg.dataRefs && msg.dataRefs.length" class="mt-4 space-y-3">
-              <div v-for="(data, dIdx) in msg.dataRefs" :key="dIdx" class="bg-gray-50 rounded p-3 border border-gray-100">
-                <div class="text-xs text-gray-500 mb-2 flex items-center">
-                  <el-icon class="mr-1"><PieChart /></el-icon> 数据图表: {{ data.title || '未命名' }}
+            <el-button 
+              :type="isSidebarOpen ? 'primary' : 'default'" 
+              :icon="Clock" 
+              size="large"
+              class="!rounded-xl !px-5 transition-all duration-300 shadow-sm hover:shadow-md border-gray-200"
+              :class="{ '!bg-blue-600 !border-blue-600': isSidebarOpen }"
+              @click.stop="toggleSidebar"
+            >
+              {{ isSidebarOpen ? '收起会话' : '历史会话' }}
+            </el-button>
+        </div>
+      </div>
+
+      <!-- Messages Area (内容不变) -->
+      <div ref="chatContainer" class="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 bg-white scroll-smooth">
+         <!-- ... (消息循环逻辑保持不变) ... -->
+         <div v-for="(msg, idx) in messages" :key="idx" 
+          class="flex w-full animate-fade-in-up" 
+          :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
+        >
+          <div class="flex max-w-[90%] md:max-w-[75%] gap-3">
+            <div v-if="msg.role === 'assistant'" class="w-8 h-8 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0 text-blue-600 mt-1">
+              <el-icon><ChatDotRound /></el-icon>
+            </div>
+            <div class="flex flex-col">
+              <div class="p-4 rounded-2xl text-sm leading-7 shadow-sm border"
+                :class="[msg.role === 'user' ? 'bg-blue-600 border-blue-600 text-white rounded-br-none' : 'bg-gray-50 border-gray-100 text-gray-800 rounded-bl-none']">
+                <div class="whitespace-pre-wrap break-words">{{ msg.content }}</div>
+                <div v-if="msg.loading" class="mt-2 flex space-x-1">
+                  <div class="w-2 h-2 bg-current rounded-full animate-bounce" style="animation-delay: 0s"></div>
+                  <div class="w-2 h-2 bg-current rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                  <div class="w-2 h-2 bg-current rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
                 </div>
-                <!-- Placeholder for Chart Component -->
-                <div class="h-40 bg-gray-200 rounded flex items-center justify-center text-gray-400 text-xs">
-                  [图表组件待实现: {{ data.chartId }}]
+              </div>
+              <div v-if="msg.dataRefs && msg.dataRefs.length" class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div v-for="(data, dIdx) in msg.dataRefs" :key="dIdx" class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
+                  <div class="text-xs font-bold text-gray-600 mb-2 flex items-center">
+                    <el-icon class="mr-1 text-blue-500"><PieChart /></el-icon> {{ data.title || '数据图表' }}
+                  </div>
+                  <div class="h-24 bg-gray-50 rounded flex items-center justify-center text-gray-400 text-xs border border-dashed border-gray-200">图表预览</div>
                 </div>
               </div>
             </div>
+            <div v-if="msg.role === 'user'" class="w-8 h-8 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0 text-gray-600 mt-1">
+              <el-icon><UserFilled /></el-icon>
+            </div>
           </div>
+        </div>
+      </div>
 
-          <!-- Avatar (User) -->
-          <div v-if="msg.role === 'user'" class="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center ml-3 flex-shrink-0 text-indigo-600 mt-1">
-            <el-icon><UserFilled /></el-icon>
+      <!-- Input Area -->
+      <!-- [注意] 输入框区域也属于"左侧主界面"，所以点击这里的空白处也会触发 closeSidebar，符合预期 -->
+      <div class="p-6 bg-white shrink-0">
+         <!-- ... (输入区域内容保持不变) ... -->
+         <div class="max-w-4xl mx-auto">
+          <div class="flex items-center justify-between mb-3 px-1">
+            <el-button size="small" :type="showContext ? 'primary' : 'info'" :plain="!showContext" round @click.stop="showContext = !showContext">
+              <el-icon class="mr-1"><Document /></el-icon> 上下文控制
+            </el-button>
+            <div v-if="showContext" class="flex items-center space-x-2 animate-fade-in" @click.stop>
+              <el-select v-model="context.tournamentId" placeholder="赛事" size="small" class="!w-32">
+                <el-option v-for="opt in options.tournaments" :key="opt.value" :label="opt.label" :value="opt.value" />
+              </el-select>
+              <el-select v-model="context.teamIds" multiple collapse-tags placeholder="战队" size="small" class="!w-40">
+                <el-option v-for="opt in options.teams" :key="opt.value" :label="opt.label" :value="opt.value" />
+              </el-select>
+            </div>
           </div>
+          <div class="relative group" @click.stop> <!-- 阻止点击输入框本身触发关闭（虽然触发也没事，但最好保留焦点逻辑） -->
+            <el-input v-model="userInput" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="问问我关于 S14 决赛 T1 的表现..." class="!text-base custom-textarea" @keydown.enter.exact.prevent="handleSend"/>
+            <el-button type="primary" circle class="absolute bottom-3 right-3 shadow-lg transition-transform hover:scale-105" :disabled="isSendDisabled" @click="handleSend">
+              <el-icon><Position /></el-icon>
+            </el-button>
+          </div>
+          <div class="text-center mt-2 text-xs text-gray-400 select-none">DeepSeek V3 Generated Content. Check important info.</div>
         </div>
       </div>
     </div>
 
-    <!-- Input Area -->
-    <div class="p-4 bg-white border-t border-gray-100">
-      <!-- Context Filters Toggle -->
-      <div class="flex items-center mb-3 space-x-2">
-         <el-button 
-            size="small" 
-            :type="showContext ? 'primary' : 'default'" 
-            text 
-            bg
-            @click="showContext = !showContext"
-          >
-            <el-icon class="mr-1"><Document /></el-icon>
-            上下文筛选 {{ showContext ? '开启' : '关闭' }}
-         </el-button>
-         
-         <div v-if="showContext" class="flex items-center space-x-2 animate-fade-in">
-           <el-select v-model="context.tournamentId" placeholder="赛事" size="small" class="w-32">
-             <el-option v-for="opt in options.tournaments" :key="opt.value" :label="opt.label" :value="opt.value" />
-           </el-select>
-           <el-select v-model="context.teamIds" multiple collapse-tags placeholder="战队" size="small" class="w-40">
-             <el-option v-for="opt in options.teams" :key="opt.value" :label="opt.label" :value="opt.value" />
-           </el-select>
-         </div>
-      </div>
+    <!-- 2. 右侧：会话列表侧边栏 (点击这里本身不应该关闭自己，所以要加 @click.stop) -->
+    <aside 
+      class="border-gray-200 bg-gray-50 flex flex-col shrink-0 transition-all duration-300 ease-in-out overflow-hidden h-full border-l"
+      :class="isSidebarOpen ? 'w-[300px] opacity-100' : 'w-0 opacity-0 border-l-0'"
+      @click.stop
+    >
+      <div class="w-[300px] flex flex-col h-full">
+         <!-- ... (侧边栏内容保持不变) ... -->
+         <div class="h-16 flex items-center justify-between px-4 border-b border-gray-200/50">
+          <span class="font-medium text-gray-600">历史会话</span>
+          <el-tooltip content="新建会话" placement="bottom">
+             <el-button :icon="Plus" circle size="small" @click="handleNewSession" />
+          </el-tooltip>
+        </div>
 
-      <!-- Input Box -->
-      <div class="relative">
-        <el-input
-          v-model="userInput"
-          type="textarea"
-          :autosize="{ minRows: 2, maxRows: 6 }"
-          placeholder="问问我这场比赛的关键数据..."
-          resize="none"
-          class="!text-base"
-          @keydown.enter.prevent="handleSend"
-        />
-        <el-button 
-          type="primary" 
-          circle 
-          class="absolute bottom-2 right-2 !w-8 !h-8"
-          :disabled="isSendDisabled"
-          @click="handleSend"
-        >
-          <el-icon><Position /></el-icon>
-        </el-button>
+        <div class="p-3">
+          <el-input prefix-icon="Search" placeholder="搜索历史..." size="small" class="w-full" />
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-2 space-y-1 py-2">
+          <template v-if="isLoggedIn && sessions.length">
+            <div v-for="session in sessions" :key="session.id" class="group relative">
+              <div 
+                v-if="editingSessionId !== session.id"
+                @click="router.push({ query: { sessionId: session.id } })"
+                class="flex items-center px-3 py-3 rounded-lg cursor-pointer transition-all duration-200 border border-transparent"
+                :class="currentSessionId === session.id 
+                  ? 'bg-white border-gray-200 shadow-sm text-blue-600' 
+                  : 'text-gray-600 hover:bg-gray-200/50'"
+              >
+                <el-icon class="mr-3 text-lg" :class="currentSessionId === session.id ? 'text-blue-500' : 'text-gray-400'"><MessageIcon /></el-icon>
+                <span class="truncate text-sm font-medium flex-1">{{ session.name }}</span>
+                <div class="hidden group-hover:flex items-center bg-inherit pl-2" :class="currentSessionId === session.id ? 'bg-white' : 'bg-gray-200/50'">
+                   <el-icon class="text-gray-400 hover:text-blue-500 cursor-pointer mr-2" size="14" @click.stop="startEditingSession(session.id, session.name)"><Edit /></el-icon>
+                   <el-icon class="text-gray-400 hover:text-red-500 cursor-pointer" size="14" @click.stop="deleteSession(session.id)"><Delete /></el-icon>
+                </div>
+              </div>
+              <div v-else ref="editContainer" class="flex items-center px-2 py-2 bg-white rounded-lg border border-blue-200 shadow-sm ring-2 ring-blue-50">
+                <el-input v-model="editingSessionName" size="small" ref="nameInput" @keyup.enter="saveSessionName" @keyup.esc="cancelEditing" />
+                <el-button type="primary" link size="small" class="ml-1" @click="saveSessionName">OK</el-button>
+              </div>
+            </div>
+          </template>
+          
+          <div v-else-if="isLoggedIn" class="text-center py-10 text-gray-400 text-sm">暂无历史会话</div>
+          
+          <div v-else class="p-4 bg-blue-50 rounded-lg border border-blue-100 m-2">
+             <div class="text-blue-800 font-medium text-sm mb-1">访客模式</div>
+             <p class="text-xs text-blue-600">登录后可保存多条对话历史。</p>
+             <el-button type="primary" size="small" class="w-full mt-3" @click="router.push('/login')">去登录</el-button>
+          </div>
+        </div>
       </div>
-      <div class="text-center mt-2 text-xs text-gray-400">
-        <span v-if="!isLoggedIn">
-            未登录用户剩余提问次数: {{ guestLimit - guestCount }} / {{ guestLimit }} | 
-            <router-link to="/login" class="text-blue-500 hover:underline">去登录</router-link>
-        </span>
-        <span v-else>
-            AI 可能产生错误信息，请以官方数据为准
-        </span>
-      </div>
-    </div>
+    </aside>
+
   </div>
 </template>
-
 <style scoped>
-:deep(.el-textarea__inner) {
-  padding-right: 3rem;
-  border-radius: 0.75rem;
+/* 针对 Element Plus Textarea 的深度定制 */
+:deep(.custom-textarea .el-textarea__inner) {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background-color: #f9fafb; /* gray-50 */
+  border: 1px solid #e5e7eb; /* gray-200 */
   box-shadow: none !important;
-  background-color: #f9fafb;
-  border-color: #e5e7eb;
+  transition: all 0.2s;
 }
-:deep(.el-textarea__inner:focus) {
-  background-color: #fff;
-  border-color: #409eff;
-  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1) !important;
+
+:deep(.custom-textarea .el-textarea__inner:focus) {
+  background-color: #ffffff;
+  border-color: #3b82f6; /* blue-500 */
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important;
+}
+
+/* 简单的淡入动画 */
+.animate-fade-in-up {
+  animation: fadeInUp 0.3s ease-out forwards;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>
-
-
-
-
-
