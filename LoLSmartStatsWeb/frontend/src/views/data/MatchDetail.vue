@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Trophy, Medal } from '@element-plus/icons-vue'
 //引入接口定义
 import type { Team, MatchDetail, Game, PlayerGameStat } from '@/types/models'
+import { dataApi } from '@/api/data'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,35 +18,72 @@ const activeGameTab = ref<number>(1)
 // --- 3. 模拟数据 ---
 const fetchMatchDetail = async () => {
   loading.value = true
-  setTimeout(() => {
-    matchData.value = {
-      id: 1001,
-      date: '2024-07-20',
-      tournamentName: '14/lpl',
-      stage: '季后',
-      winnerId: 101,
-      team1: { id: 101, name: 'Bilibili Gaming', shortName: 'BLG' },
-      team2: { id: 102, name: 'Top Esports', shortName: 'TES' },
-      games: [
-        {
-          id: 5001, matchId: 1001, gameNumber: 1, duration: 1856,
-          blueTeamId: 101, redTeamId: 102, winnerId: 101,
-          stats: generateMockStats(5001, 101, 102, 101)
-        },
-        {
-          id: 5002, matchId: 1001, gameNumber: 2, duration: 2140,
-          blueTeamId: 102, redTeamId: 101, winnerId: 102,
-          stats: generateMockStats(5002, 102, 101, 102)
-        },
-        {
-          id: 5003, matchId: 1001, gameNumber: 3, duration: 1980,
-          blueTeamId: 101, redTeamId: 102, winnerId: 101,
-          stats: generateMockStats(5003, 101, 102, 101)
-        }
-      ]
-    }
-    loading.value = false
-  }, 500)
+  try {
+      // --- [TODO: 对接后端时取消注释] ---
+      /*
+      // 注意：这里强烈依赖后端在 /matches/detail 的 games 数组中返回 stats 字段
+      const res: any = await dataApi.getMatchDetail(matchId)
+      
+      // 数据映射 (Backend camelCase -> Frontend Interface)
+      matchData.value = {
+          id: res.matchId,
+          date: res.date,
+          tournamentName: res.tournamentId,
+          stage: 'TBD', // 接口文档里好像没写 stage，可能需要补充
+          team1: { id: res.teams[0].teamId, name: '...', shortName: '...' }, // 需确认后端是否返回完整 Team 对象
+          team2: { id: res.teams[1].teamId, name: '...', shortName: '...' },
+          winnerId: 0, // 文档没直接返回大场 winnerId，可能需要前端算
+          games: res.games.map((g: any) => ({
+              id: g.gameNo, // 或 g.gameId
+              matchId: res.matchId,
+              gameNumber: g.gameNo,
+              duration: g.durationSec,
+              blueTeamId: 0, // 文档里没明确写 games 下的红蓝方 ID，需确认
+              redTeamId: 0,
+              winnerId: g.winnerTeamId,
+              stats: g.stats // [关键] 依赖后端返回这个数组
+          }))
+      }
+      */
+
+      // --- [Mock Logic] ---
+      setTimeout(() => {
+      matchData.value = {
+        id: 1001,
+        date: '2024-07-20',
+        tournamentName: '14/lpl',
+        stage: '季后',
+        winnerId: 101,
+        team1: { id: 101, name: 'Bilibili Gaming', shortName: 'BLG' },
+        team2: { id: 102, name: 'Top Esports', shortName: 'TES' },
+        games: [
+          {
+            id: 5001, matchId: 1001, gameNumber: 1, duration: 1856,
+            blueTeamId: 101, redTeamId: 102, winnerId: 101,
+            stats: generateMockStats(5001, 101, 102, 101)
+          },
+          {
+            id: 5002, matchId: 1001, gameNumber: 2, duration: 2140,
+            blueTeamId: 102, redTeamId: 101, winnerId: 102,
+            stats: generateMockStats(5002, 102, 101, 102)
+          },
+          {
+            id: 5003, matchId: 1001, gameNumber: 3, duration: 1980,
+            blueTeamId: 101, redTeamId: 102, winnerId: 101,
+            stats: generateMockStats(5003, 101, 102, 101)
+          }
+        ]
+      }
+      loading.value = false
+    }, 500)
+
+  } catch (e) {
+      console.error(e)
+  } finally {
+      loading.value = false // 移动到 finally 确保执行
+  }
+
+
 }
 
 const generateMockStats = (gameId: number, blueId: number, redId: number, winnerId: number): PlayerGameStat[] => {

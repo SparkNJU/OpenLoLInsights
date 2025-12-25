@@ -8,6 +8,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../../utils/request'
+import { chatApi } from '@/api/chat'
 
 // --- 类型定义 ---
 interface Message {
@@ -198,8 +199,22 @@ const scrollToBottom = async () => {
 // 加载特定会话的历史消息
 const fetchHistory = async () => {
   if (!currentSessionId.value) return
+
   messages.value = [{ role: 'assistant', content: '正在加载历史记录...' }]
   try {
+    // --- [TODO: 对接后端时取消注释] ---
+    /*
+    const res: any = await chatApi.getHistory(currentSessionId.value, 1, 50)
+    if (res && res.items) {
+       messages.value = res.items.reverse().map((item: any) => ({
+        role: item.role,
+        content: item.content,
+        ts: item.ts,
+        dataRefs: item.dataRefs
+      }))
+      scrollToBottom()
+    }
+    */
     const res: any = await request.post('/chat/history', {
       sessionId: currentSessionId.value,
       page: 1,
@@ -235,6 +250,18 @@ const handleNewSession = () => {
     router.replace({ query: {} })
     return
   }
+
+  // --- [TODO: 官方推荐流程 - 先调接口创建会话] ---
+  /*
+  try {
+      const res: any = await chatApi.createSession()
+      const newId = res.sessionId
+      // 更新本地列表
+      sessions.value.unshift({ id: newId, name: res.title || '新对话' })
+      saveSessions()
+      router.push({ query: { sessionId: newId } })
+  } catch(e) { ... }
+  */
 
   const newId = Date.now().toString()
   const newSessionName = `新的对话 ${sessions.value.length + 1}`

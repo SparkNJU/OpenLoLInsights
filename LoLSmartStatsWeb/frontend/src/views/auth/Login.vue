@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import request from '../../utils/request'
 import { User, Lock } from '@element-plus/icons-vue'
+import { authApi } from '@/api/auth'
 
 const router = useRouter()
 const loading = ref(false)
@@ -33,7 +34,10 @@ const handleLogin = async () => {
   loading.value = true
   try {
     // 根据 API 文档: POST /api/v1/auth/login
-    const res: any = await request.post('/auth/login', form)
+    const res: any = await authApi.login({
+      email: form.email,
+      password: form.password
+    })
     // res 结构: { user: {...}, tokens: { accessToken, refreshToken } }
 
     if (res.tokens) {

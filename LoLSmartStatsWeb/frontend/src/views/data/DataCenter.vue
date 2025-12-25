@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router' // [新增] 引入 useRoute
 import { Search, Filter, ArrowLeft, Calendar } from '@element-plus/icons-vue'
 import type { Team, MatchListItem, Player } from '@/types/models'
+import { dataApi } from '@/api/data'
 
 const router = useRouter()
 const route = useRoute() // [新增] 获取当前路由参数
@@ -101,6 +102,26 @@ const fetchMatches = async (tournamentType?: string) => {
     const filterStr = `${selectedYear.value}/${type}`
     console.log(`Fetching matches for: ${filterStr}`)
     
+    // --- [TODO: 对接后端时取消注释] ---
+    /*
+    const res: any = await dataApi.searchMatches(filter, 1, 20)
+    // 后端返回结构: { items: [], total: ... }
+    // 需要适配一下字段名（如果后端返回 camelCase）
+    matches.value = res.items.map((m: any) => ({
+        id: m.matchId,
+        date: m.date,
+        tournamentName: m.tournamentId, // 或 m.tournamentName
+        stage: m.stage || '常规赛',
+        team1Id: m.blueTeamId, 
+        team1Name: 'TBD', // 如果列表接口没返回名字，可能需要额外处理或要求后端加上
+        scoreTeam1: parseInt(m.score.split('-')[0]),
+        team2Id: m.redTeamId,
+        team2Name: 'TBD',
+        scoreTeam2: parseInt(m.score.split('-')[1]),
+        winnerId: m.winnerTeamId
+    }))
+    */
+
     const mockData: MatchListItem[] = []
     
     // 特定 Mock 数据: BLG 2:0 TES (ID: 1001)
@@ -132,7 +153,27 @@ const fetchMatches = async (tournamentType?: string) => {
 }
 
 const fetchTeams = async () => { teams.value = [{ id:1, name:'BLG', shortName:'BLG'},{ id:2, name:'TES', shortName:'TES'}]}
-const handlePlayerSearch = async () => { players.value = [{ id:1, name:'Faker'}]}
+const handlePlayerSearch = async () => { 
+  playerLoading.value = true
+  try {
+    // --- [TODO: 对接后端时取消注释] ---
+    /*
+    const res: any = await dataApi.searchPlayers({ keyword: playerSearchKeyword.value })
+    players.value = res.items.map((p: any) => ({
+        id: p.playerId || p.id,
+        name: p.name || p.playerId // 视后端返回字段而定
+    }))
+    */
+
+    // --- [Mock Data] ---
+    // ... (保留之前的 mock 代码) ..
+    players.value = [{ id:1, name:'Faker'}]
+  } finally {
+    playerLoading.value = false
+  }
+}
+  
+  
 
 watch(viewMode, (newVal) => {
   if (newVal === 'teams') fetchTeams()
