@@ -19,9 +19,7 @@ class Settings:
     DB_HOST = os.getenv("DB_HOST", "localhost")
     DB_PORT = os.getenv("DB_PORT", "3306")
     DB_NAME = os.getenv("DB_NAME", "lol_data")
+    # Construct DATABASE_URL
+    DATABASE_URL = f'mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}' if DB_USER and DB_PASSWORD else None
     
-    @property
-    def DATABASE_URL(self):
-        return f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-
 settings = Settings()

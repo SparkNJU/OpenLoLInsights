@@ -1,6 +1,10 @@
 from langchain.tools import tool
-from config import settings
+# Import the settings instance explicitly to avoid the ambiguity where
+# `from config import settings` returns the module object instead of the
+# `settings` instance defined in `config/settings.py`.
+from config.settings import settings
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 import json, os
 import re
 
@@ -9,6 +13,10 @@ DEFAULT_LIMIT = 50
 def _get_engine():
     # allow overriding via DATABASE_URL env var (useful in tests)
     db_url = os.getenv('DATABASE_URL') or settings.DATABASE_URL
+    # On Windows, SQLite files can remain locked if connections are pooled.
+    # Use NullPool for sqlite to ensure connections are not held.
+    if db_url.startswith('sqlite:'):
+        return create_engine(db_url, poolclass=NullPool)
     return create_engine(db_url)
 
 def _to_json_result(result):
@@ -28,6 +36,11 @@ def _safe_select(sql_text, params=None):
             return _to_json_result(result)
     except Exception as e:
         return {'error': str(e)}
+    finally:
+        try:
+            engine.dispose()
+        except Exception:
+            pass
 
 @tool
 def db_query(query: str) -> str:
@@ -91,6 +104,11 @@ def db_query(query: str) -> str:
                 return json.dumps(res)
         except Exception as e:
             return json.dumps({'error': str(e)})
+        finally:
+            try:
+                engine.dispose()
+            except Exception:
+                pass
 
     # fallback: if starts with select, execute
     if re.match(r'^select\b', q_low):

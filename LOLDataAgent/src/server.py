@@ -33,9 +33,23 @@ class RunRequest(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     global base_agent, sql_agent, orchestrator
-    base_agent = BaseAgent()
-    sql_agent = SQLAgent()
-    orchestrator = Orchestrator()
+    try:
+        base_agent = BaseAgent()
+    except Exception as e:
+        print(f"[startup] BaseAgent init failed: {e}")
+        base_agent = None
+
+    try:
+        sql_agent = SQLAgent()
+    except Exception as e:
+        print(f"[startup] SQLAgent init failed: {e}")
+        sql_agent = None
+
+    try:
+        orchestrator = Orchestrator()
+    except Exception as e:
+        print(f"[startup] Orchestrator init failed: {e}")
+        orchestrator = Orchestrator(llm=None)
 
 
 @app.get("/api/v1/ai/health")
@@ -161,7 +175,10 @@ async def index():
 @app.get("/api/v1/ai/tools")
 async def tools():
     tools = get_all_tools()
-    return {"tools": [t.__name__ for t in tools]}
+    names = []
+    for t in tools:
+        names.append(getattr(t, "name", getattr(t, "__name__", str(t))))
+    return {"tools": names}
 
 
 async def simple_stream_generator(request: Request, payload: dict):
