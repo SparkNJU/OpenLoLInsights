@@ -1,417 +1,371 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import request from '@/utils/request'
-import { ElMessage } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
+import { ref, reactive, onMounted, watch, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router' // [新增] 引入 useRoute
+import { Search, Filter, ArrowLeft, Calendar } from '@element-plus/icons-vue'
+import type { Team, MatchListItem, Player } from '@/types/models'
+import { dataApi } from '@/api/data'
 
 const router = useRouter()
+const route = useRoute() // [新增] 获取当前路由参数
 
-// 当前视图模式：赛事总览/战队数据/选手信息
+const getLogoUrl = (name: string) => {
+  return new URL(`../../assets/logos/${name}`, import.meta.url).href
+}
+
+// --- 1. 状态管理 ---
 const viewMode = ref<'overview' | 'teams' | 'players'>('overview')
-
-// 通用加载状态（不同视图可复用）
+const browsingLevel = ref<'gallery' | 'matches'>('gallery')
+const activeTournament = ref<any>(null)
 const loading = ref(false)
+const selectedYear = ref('25')
 
-// 日期筛选（用于比赛与概览）
-const dateRange = ref('')
+const matches = ref<MatchListItem[]>([])
+const teams = ref<Team[]>([])
+const players = ref<Player[]>([])
+const playerLoading = ref(false)
+const playerSearchKeyword = ref('')
 
-// 比赛数据
-const matches = ref<any[]>([])
-
-// 战队数据
-const teams = ref<any[]>([])
-
-// 概览数据（示例：总场次、总战队、总选手）
-const overview = reactive<{ totalMatches: number; totalTeams: number; totalPlayers: number }>({
-  totalMatches: 0,
-  totalTeams: 0,
-  totalPlayers: 0,
+// --- 2. 赛事卡片数据 ---
+const tournaments = computed(() => {
+  const year = selectedYear.value
+  const fullYear = `20${year}`
+  return [
+    { id: 'lpl_spring', code: 'lpl', name: `${fullYear} LPL 春季赛`, period: `${fullYear}-01-15 ~ ${fullYear}-04-20`, logo: 'lpl.png' },
+    { id: 'lck_spring', code: 'lck', name: `${fullYear} LCK 春季赛`, period: `${fullYear}-01-17 ~ ${fullYear}-04-14`, logo: 'lck.png' },
+    { id: 'msi', code: 'msi', name: `${fullYear} 季中冠军赛`, period: `${fullYear}-05-01 ~ ${fullYear}-05-19`, logo: '季中冠军赛.png' },
+    { id: 'lpl_summer', code: 'lpl', name: `${fullYear} LPL 夏季赛`, period: `${fullYear}-06-01 ~ ${fullYear}-08-30`, logo: 'lpl.png' },
+    { id: 's_world', code: 's', name: `${fullYear} 全球总决赛`, period: `${fullYear}-10-01 ~ ${fullYear}-11-02`, logo: '全球冠军赛.png' },
+    { id: 'rr', code: 'rr', name: `${fullYear} 亚洲对抗赛`, period: `${fullYear}-07-05 ~ ${fullYear}-07-08`, logo: '亚洲对抗赛.png' },
+    { id: 'first_stand', code: 'msc', name: `${fullYear} 全球先锋赛`, period: `${fullYear}-03-10 ~ ${fullYear}-03-16`, logo: '全球先锋赛.png' }
+  ]
 })
 
-// 获取比赛列表（数据来源：后端 /matches/search；若后端不可用，使用模拟数据）
-const fetchMatches = async () => {
-  loading.value = true
-  try {
-    const payload = {
-      filter: {
-        ...(dateRange.value ? {
-          dateRange: {
-            from: (dateRange as any)[0],
-            to: (dateRange as any)[1],
-          },
-        } : {}),
-      },
-      page: 1,
-      pageSize: 20,
-      sort: [{ field: 'date', direction: 'desc' }],
-    }
+const yearOptions = computed(() => {
+  const options = []
+  for (let i = 25; i >= 14; i--) {
+    options.push({ label: `20${i} 赛季`, value: String(i) })
+  }
+  return options
+})
 
-    // 模拟数据（无后端时）
-    const mockMatch = {
-      id: 'mock-123',
-      time: '2024-07-20',
-      teamA: 'BLG',
-      teamB: 'TES',
-      scoreA: 2,
-      scoreB: 1,
-      status: 'Finished',
-      tournament: 'LPL 2024 Summer',
-    }
-    matches.value = [mockMatch]
+// --- 3. 核心逻辑 (修改了路由同步) ---
 
-    // 后端请求
-    try {
-      const res: any = await request.post('/matches/search', payload)
-      if (res && res.items && res.items.length > 0) {
-        const apiMatches = res.items.map((item: any) => ({
-          id: item.matchId,
-          time: item.date,
-          teamA: item.blueTeamId,
-          teamB: item.redTeamId,
-          scoreA: item.score ? item.score.split('-')[0] : 0,
-          scoreB: item.score ? item.score.split('-')[1] : 0,
-          status: 'Finished',
-          tournament: item.tournamentId,
-        }))
-        matches.value = [...matches.value, ...apiMatches]
-      }
-    } catch (e) {
-      console.log('Backend not available, using mock data only')
+// 进入赛事详情 (Level 1 -> Level 2)
+const handleSelectTournament = (tournament: any) => {
+  activeTournament.value = tournament
+  browsingLevel.value = 'matches'
+  // [关键修改] 将状态写入 URL，这样刷新或返回时状态还在
+  router.replace({ query: { ...route.query, year: selectedYear.value, tournament: tournament.code } })
+  fetchMatches(tournament.code)
+}
+
+// 返回赛事列表 (Level 2 -> Level 1)
+const handleBackToGallery = () => {
+  browsingLevel.value = 'gallery'
+  activeTournament.value = null
+  matches.value = []
+  // [关键修改] 清除 URL 中的 tournament 参数
+  router.replace({ query: { ...route.query, tournament: undefined } })
+}
+
+const goToMatch = (id: number) => {
+  // 跳转时，当前的 URL query (year, tournament) 会保留在历史记录里
+  // 当用户点浏览器返回时，这些参数会恢复
+  router.push({ name: 'match-detail', params: { id: id.toString() } })
+}
+
+// [新增] 初始化状态：检查 URL 参数
+const initFromUrl = () => {
+  const { year, tournament } = route.query
+  
+  // 1. 恢复年份
+  if (year) {
+    selectedYear.value = year as string
+  }
+
+  // 2. 恢复赛事详情页
+  if (tournament) {
+    // 必须等待 tournaments 计算属性更新 (虽然 computed 是同步的，但稳妥起见直接查找)
+    const target = tournaments.value.find(t => t.code === tournament)
+    if (target) {
+      activeTournament.value = target
+      browsingLevel.value = 'matches'
+      fetchMatches(tournament as string)
     }
-  } catch (error) {
-    console.error('Failed to fetch matches:', error)
-  } finally {
-    loading.value = false
   }
 }
 
-// 当日期改变时刷新当前视图的数据（数据来源：用户选择 + 后端接口）
-const handleDateChange = () => {
-  if (viewMode.value === 'overview') { fetchOverview(); fetchMatches() }
-  if (viewMode.value === 'teams') fetchTeams()
-  if (viewMode.value === 'players') handlePlayerSearch()
+const fetchMatches = async (tournamentType?: string) => {
+  loading.value = true
+  try {
+    const type = tournamentType || 'lpl'
+    const filterStr = `${selectedYear.value}/${type}`
+    console.log(`Fetching matches for: ${filterStr}`)
+    
+    // --- [TODO: 对接后端时取消注释] ---
+    /*
+    const res: any = await dataApi.searchMatches(filter, 1, 20)
+    // 后端返回结构: { items: [], total: ... }
+    // 需要适配一下字段名（如果后端返回 camelCase）
+    matches.value = res.items.map((m: any) => ({
+        id: m.matchId,
+        date: m.date,
+        tournamentName: m.tournamentId, // 或 m.tournamentName
+        stage: m.stage || '常规赛',
+        team1Id: m.blueTeamId, 
+        team1Name: 'TBD', // 如果列表接口没返回名字，可能需要额外处理或要求后端加上
+        scoreTeam1: parseInt(m.score.split('-')[0]),
+        team2Id: m.redTeamId,
+        team2Name: 'TBD',
+        scoreTeam2: parseInt(m.score.split('-')[1]),
+        winnerId: m.winnerTeamId
+    }))
+    */
+
+    const mockData: MatchListItem[] = []
+    
+    // 特定 Mock 数据: BLG 2:0 TES (ID: 1001)
+    mockData.push({
+        id: 1001,
+        date: `20${selectedYear.value}-08-10`,
+        tournamentName: filterStr,
+        stage: '小组赛',
+        team1Id: 101, team1Name: 'BLG', scoreTeam1: 2,
+        team2Id: 102, team2Name: 'TES', scoreTeam2: 0,
+        winnerId: 101
+    })
+
+    // 随机填充
+    const count = Math.floor(Math.random() * 4) + 2
+    for(let i=0; i<count; i++) {
+        mockData.push({
+            id: 2000 + i,
+            date: `20${selectedYear.value}-0${Math.floor(Math.random()*8)+1}-1${i}`,
+            tournamentName: filterStr,
+            stage: '常规赛',
+            team1Id: 103, team1Name: 'JDG', scoreTeam1: 1,
+            team2Id: 104, team2Name: 'LNG', scoreTeam2: 2,
+            winnerId: 104
+        })
+    }
+    setTimeout(() => { matches.value = mockData; loading.value = false }, 300)
+  } catch (error) { loading.value = false }
 }
 
-// 跳转到比赛详情页（数据来源：路由参数传入）
-const goToMatch = (id: string) => {
-  router.push({ name: 'match-detail', params: { id } })
-}
-
-// 选手搜索关键字
-const playerSearchKeyword = ref('')
-// 选手列表数据
-const players = ref<any[]>([])
-// 选手加载状态
-const playerLoading = ref(false)
-
-// 搜索选手（数据来源：后端 /players/search；若失败则返回空列表）
-const handlePlayerSearch = async () => {
+const fetchTeams = async () => { teams.value = [{ id:1, name:'BLG', shortName:'BLG'},{ id:2, name:'TES', shortName:'TES'}]}
+const handlePlayerSearch = async () => { 
   playerLoading.value = true
   try {
-    const payload = {
-      filter: {
-        playerId: playerSearchKeyword.value ? playerSearchKeyword.value : undefined,
-      },
-      page: 1,
-      pageSize: 20,
-    }
-    const res: any = await request.post('/players/search', payload)
-    if (res && res.items) {
-      players.value = res.items
-    } else {
-      players.value = []
-    }
-  } catch (error) {
-    console.error('Failed to search players:', error)
-    players.value = []
+    // --- [TODO: 对接后端时取消注释] ---
+    /*
+    const res: any = await dataApi.searchPlayers({ keyword: playerSearchKeyword.value })
+    players.value = res.items.map((p: any) => ({
+        id: p.playerId || p.id,
+        name: p.name || p.playerId // 视后端返回字段而定
+    }))
+    */
+
+    // --- [Mock Data] ---
+    // ... (保留之前的 mock 代码) ..
+    players.value = [{ id:1, name:'Faker'}]
   } finally {
     playerLoading.value = false
   }
 }
+  
+  
 
-// 获取战队数据（数据来源：后端 /teams/search；若后端不可用，使用模拟数据）
-const fetchTeams = async () => {
-  loading.value = true
-  try {
-    const payload = {
-      filter: {},
-      page: 1,
-      pageSize: 20,
-      sort: [{ field: 'name', direction: 'asc' }],
-    }
-
-    // 模拟战队数据
-    const mockTeams = [
-      { id: 'team-blg', name: 'BLG', wins: 12, losses: 4 },
-      { id: 'team-tes', name: 'TES', wins: 10, losses: 6 },
-    ]
-    teams.value = mockTeams
-
-    try {
-      const res: any = await request.post('/teams/search', payload)
-      if (res && res.items) {
-        const apiTeams = res.items.map((t: any) => ({
-          id: t.teamId || t.id,
-          name: t.teamName || t.name,
-          wins: t.wins ?? 0,
-          losses: t.losses ?? 0,
-        }))
-        teams.value = apiTeams.length ? apiTeams : teams.value
-      }
-    } catch (e) {
-      console.log('Backend not available, using mock data only')
-    }
-  } catch (error) {
-    console.error('Failed to fetch teams:', error)
-  } finally {
-    loading.value = false
-  }
-}
-
-// 获取赛事总览（数据来源：聚合接口 /overview；若后端不可用，使用模拟数据）
-const fetchOverview = async () => {
-  loading.value = true
-  try {
-    // 模拟概览数据
-    overview.totalMatches = 128
-    overview.totalTeams = 18
-    overview.totalPlayers = 180
-
-    // 真实接口（若可用）
-    try {
-      const payload = {
-        filter: {
-          ...(dateRange.value ? {
-            dateRange: {
-              from: (dateRange as any)[0],
-              to: (dateRange as any)[1],
-            },
-          } : {}),
-        },
-      }
-      const res: any = await request.post('/overview', payload)
-      if (res && res.data) {
-        overview.totalMatches = res.data.totalMatches ?? overview.totalMatches
-        overview.totalTeams = res.data.totalTeams ?? overview.totalTeams
-        overview.totalPlayers = res.data.totalPlayers ?? overview.totalPlayers
-      }
-    } catch (e) {
-      console.log('Backend not available, using mock overview only')
-    }
-  } catch (error) {
-    console.error('Failed to fetch overview:', error)
-  } finally {
-    loading.value = false
-  }
-}
-
-// 视图切换：根据选择加载对应数据（数据来源：用户选择 + 后端接口）
-watch(viewMode, (mode) => {
-  if (mode === 'overview') { fetchOverview(); fetchMatches() }
-  if (mode === 'teams') fetchTeams()
-  if (mode === 'players') handlePlayerSearch()
+watch(viewMode, (newVal) => {
+  if (newVal === 'teams') fetchTeams()
+  if (newVal === 'players') handlePlayerSearch()
 })
 
-// 页面挂载：默认加载概览与选手信息（数据来源：后端接口/模拟数据）
+watch(selectedYear, () => {
+  // 如果在详情页切换年份，退回列表并更新 URL
+  if (browsingLevel.value === 'matches') {
+    handleBackToGallery()
+    // handleBackToGallery 里面已经处理了 router.replace
+  }
+  // 如果是在外面切换年份，也更新一下 URL 保持同步
+  else {
+    router.replace({ query: { ...route.query, year: selectedYear.value } })
+  }
+})
+
 onMounted(() => {
-  fetchOverview()
-  fetchMatches()
-  handlePlayerSearch()
+  // [关键] 组件加载时，根据 URL 恢复状态
+  initFromUrl()
+  
+  if (viewMode.value === 'teams') fetchTeams()
+  if (viewMode.value === 'players') handlePlayerSearch()
 })
 </script>
 
 <template>
   <div class="h-full flex flex-col bg-slate-50">
-    <!-- 顶部导航栏 -->
-    <div class="flex-none bg-white border-b border-gray-200 px-6 py-4 shadow-sm sticky top-0 z-20">
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 class="text-2xl font-bold text-gray-800 tracking-tight flex items-center gap-2">
-            <span class="w-2 h-8 bg-blue-600 rounded-full inline-block"></span>
-            赛事数据中心
-          </h2>
-          <p class="text-gray-500 text-sm mt-1 ml-4">LPL 2024 Summer 实时数据追踪</p>
-        </div>
-        
-        <div class="flex items-center space-x-4 bg-gray-100 p-1 rounded-lg">
-          <button 
-            v-for="mode in ['overview', 'teams', 'players']" 
-            :key="mode"
-            @click="viewMode = mode as any"
-            :class="[
-              'px-4 py-2 rounded-md text-sm font-medium transition-all duration-200',
-              viewMode === mode 
-                ? 'bg-white text-blue-600 shadow-sm' 
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-            ]"
-          >
-            {{ mode === 'overview' ? '赛事总览' : mode === 'teams' ? '战队数据' : '选手信息' }}
-          </button>
-        </div>
+    
+    <!-- 1. 顶部 Header -->
+    <div class="h-16 flex-none bg-white border-b border-gray-100 px-6 flex items-center justify-between sticky top-0 z-30">
+      <div class="flex items-center space-x-3">
+        <span class="w-1.5 h-6 bg-blue-600 rounded-full inline-block shadow-sm shadow-blue-200"></span>
+        <span class="font-bold text-lg text-gray-800">赛事数据中心</span>
+        <el-tag type="primary" effect="light" round class="font-medium">Beta</el-tag>
       </div>
 
-      <!-- 二级筛选栏 -->
-      <div class="mt-4 flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-gray-100">
-        <!-- 左侧：日期筛选 -->
-        <div class="flex items-center gap-3">
-          <template v-if="viewMode !== 'players'">
-            <span class="text-sm font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">日期范围</span>
-            <el-date-picker
-              v-model="dateRange"
-              type="daterange"
-              range-separator="至"
-              start-placeholder="开始日期"
-              end-placeholder="结束日期"
-              value-format="YYYY-MM-DD"
-              @change="handleDateChange"
-              size="default"
-              class="!w-64"
-            />
-          </template>
-        </div>
-
-        <!-- 右侧：搜索或其他操作 -->
-        <div v-if="viewMode === 'players'" class="flex items-center gap-2 w-full md:w-auto">
-          <el-input
-            v-model="playerSearchKeyword"
-            placeholder="输入选手 ID 搜索..."
-            class="w-full md:w-72"
-            @keyup.enter="handlePlayerSearch"
-            clearable
-            @clear="handlePlayerSearch"
-          >
-            <template #prefix>
-              <el-icon class="text-gray-400"><Search /></el-icon>
-            </template>
-          </el-input>
-          <el-button type="primary" @click="handlePlayerSearch" class="!px-6">搜索</el-button>
-        </div>
+      <div class="flex bg-gray-100/80 p-1 rounded-lg">
+        <button 
+          v-for="mode in ['overview', 'teams', 'players']" 
+          :key="mode"
+          @click="viewMode = mode as any"
+          class="px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200"
+          :class="[viewMode === mode ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50']"
+        >
+          {{ mode === 'overview' ? '赛事总览' : mode === 'teams' ? '战队列表' : '选手名录' }}
+        </button>
       </div>
     </div>
 
-    <!-- 内容展示区域 -->
+    <!-- 2. 二级工具栏 -->
+    <div class="flex-none bg-white border-b border-gray-100 px-6 py-3 flex items-center justify-between z-20 shadow-sm min-h-[60px]">
+      
+      <div class="flex items-center gap-3 w-full">
+        <!-- A: 选手/战队 -->
+        <template v-if="viewMode !== 'overview'">
+           <div class="text-sm text-gray-400">{{ viewMode === 'teams' ? '浏览所有注册战队' : '搜索职业选手生涯数据' }}</div>
+        </template>
+
+        <!-- B: 赛事总览 - 列表模式 -->
+        <template v-else-if="browsingLevel === 'matches'">
+           <el-button link @click="handleBackToGallery" class="!px-0 mr-2 hover:text-blue-600 transition-colors">
+              <el-icon class="mr-1 text-lg"><ArrowLeft /></el-icon>
+              <span class="text-base font-bold text-gray-700">返回赛事列表</span>
+           </el-button>
+           <div class="h-4 w-px bg-gray-300 mx-2"></div>
+           <span class="font-bold text-gray-800">{{ activeTournament?.name }}</span>
+           <el-tag size="small" type="info" class="ml-2">{{ activeTournament?.period }}</el-tag>
+        </template>
+
+        <!-- C: 赛事总览 - 卡片墙模式 -->
+        <template v-else>
+           <el-select v-model="selectedYear" placeholder="年份" size="small" class="!w-36">
+              <template #prefix><el-icon><Calendar /></el-icon></template>
+              <el-option v-for="item in yearOptions" :key="item.value" :label="item.label" :value="item.value" />
+           </el-select>
+        </template>
+      </div>
+
+      <!-- 搜索框 -->
+      <div v-if="viewMode === 'players'" class="flex items-center gap-2">
+        <el-input v-model="playerSearchKeyword" placeholder="Search Player..." size="small" class="!w-64" clearable>
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+      </div>
+    </div>
+
+    <!-- 3. 主内容区 -->
     <div class="flex-1 overflow-auto p-6 scroll-smooth">
-      <!-- 概览视图 -->
-      <div v-if="viewMode === 'overview'" class="space-y-6" v-loading="loading">
-        <!-- 统计卡片 -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
-          <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white shadow-lg shadow-blue-200 transform hover:-translate-y-1 transition-transform duration-300">
-            <div class="text-blue-100 text-sm font-medium mb-1">总场次 Matches</div>
-            <div class="text-4xl font-bold tracking-tight">{{ overview.totalMatches }}</div>
-          </div>
-          <div class="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-6 text-white shadow-lg shadow-emerald-200 transform hover:-translate-y-1 transition-transform duration-300">
-            <div class="text-emerald-100 text-sm font-medium mb-1">总战队 Teams</div>
-            <div class="text-4xl font-bold tracking-tight">{{ overview.totalTeams }}</div>
-          </div>
-          <div class="bg-gradient-to-br from-violet-500 to-violet-600 rounded-xl p-6 text-white shadow-lg shadow-violet-200 transform hover:-translate-y-1 transition-transform duration-300">
-            <div class="text-violet-100 text-sm font-medium mb-1">总选手 Players</div>
-            <div class="text-4xl font-bold tracking-tight">{{ overview.totalPlayers }}</div>
-          </div>
-        </div>
-
-        <!-- 比赛列表 -->
-        <div>
-          <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-            <span class="w-1 h-5 bg-gray-800 rounded-full"></span>
-            近期比赛
-          </h3>
-          <div v-if="matches.length === 0 && !loading" class="bg-white rounded-xl p-10 text-center text-gray-400 border border-gray-100 shadow-sm">
-            暂无比赛数据
-          </div>
-          <div class="grid gap-4">
-            <div v-for="match in matches" :key="match.id"
-                 class="group bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all cursor-pointer flex flex-col sm:flex-row items-center justify-between gap-4"
-                 @click="goToMatch(match.id)">
-              
-              <!-- 时间与赛事 -->
-              <div class="flex flex-col sm:w-1/4 gap-1">
-                <div class="text-sm font-bold text-gray-700">{{ match.tournament }}</div>
-                <div class="text-xs text-gray-400 flex items-center gap-1">
-                  <span class="w-2 h-2 rounded-full bg-gray-300"></span>
-                  {{ match.time }}
-                </div>
-              </div>
-
-              <!-- 比分核心区 -->
-              <div class="flex items-center justify-center flex-1 gap-6">
-                <div class="text-right w-24 font-bold text-lg text-gray-800 group-hover:text-blue-600 transition-colors">{{ match.teamA }}</div>
-                <div class="px-4 py-1 bg-gray-50 border border-gray-200 rounded-full font-mono font-bold text-xl text-gray-800 group-hover:bg-blue-50 group-hover:border-blue-100 group-hover:text-blue-600 transition-colors">
-                  {{ match.scoreA }} : {{ match.scoreB }}
-                </div>
-                <div class="text-left w-24 font-bold text-lg text-gray-800 group-hover:text-blue-600 transition-colors">{{ match.teamB }}</div>
-              </div>
-
-              <!-- 操作 -->
-              <div class="sm:w-1/4 text-right">
-                <span class="text-sm text-gray-400 group-hover:text-blue-500 flex items-center justify-end gap-1">
-                  查看详情 <span class="text-lg">→</span>
-                </span>
-              </div>
+      
+      <!-- MODE: OVERVIEW -->
+      <div v-if="viewMode === 'overview'" class="h-full">
+        
+        <!-- Level 1: 赛事卡片墙 -->
+        <div v-if="browsingLevel === 'gallery'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6 animate-fade-in">
+          <div 
+            v-for="t in tournaments" 
+            :key="t.id"
+            @click="handleSelectTournament(t)"
+            class="group bg-white rounded-xl border border-gray-100 p-5 cursor-pointer shadow-sm hover:shadow-lg hover:border-blue-200 transition-all duration-300 flex items-center gap-5 relative overflow-hidden"
+          >
+            <!-- 装饰背景 -->
+            <div class="absolute right-0 top-0 w-24 h-24 bg-gray-50 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+            
+            <div class="w-16 h-16 shrink-0 relative z-10">
+               <img :src="getLogoUrl(t.logo)" class="w-full h-full object-contain drop-shadow-sm group-hover:scale-105 transition-transform duration-300" alt="logo" />
+            </div>
+            <div class="flex-1 z-10">
+               <h3 class="font-bold text-gray-800 text-lg mb-1 group-hover:text-blue-600 transition-colors">{{ t.name }}</h3>
+               <div class="text-xs text-gray-400 font-mono">{{ t.period }}</div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- 战队列表 -->
-      <div v-else-if="viewMode === 'teams'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" v-loading="loading">
-        <div v-if="teams.length === 0 && !loading" class="col-span-full text-center py-20 text-gray-400">
-          暂无战队数据
-        </div>
-        <div v-for="team in teams" :key="team.id" 
-             class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300 flex flex-col items-center text-center group">
-          <div class="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center text-xl font-bold text-gray-400 mb-4 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
-            {{ team.name.substring(0, 1).toUpperCase() }}
-          </div>
-          <div class="font-bold text-xl text-gray-800 mb-2">{{ team.name }}</div>
-          <div class="text-sm text-gray-500 bg-gray-50 px-3 py-1 rounded-full group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
-            {{ team.wins }} 胜 / {{ team.losses }} 负
-          </div>
-        </div>
-      </div>
-
-      <!-- 选手列表 -->
-      <div v-else class="space-y-4">
-        <div v-loading="playerLoading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          <div v-if="players.length === 0 && !playerLoading" class="col-span-full text-center py-20 text-gray-400">
-            未找到选手数据
-          </div>
-          <div v-for="player in players" :key="player.playerId"
-               class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-lg hover:border-blue-200 transition-all duration-300 flex items-center space-x-4">
-            <div class="w-14 h-14 bg-gradient-to-br from-gray-100 to-gray-200 rounded-full flex items-center justify-center text-gray-500 font-bold text-xl shadow-inner">
-              {{ player.playerId.substring(0, 1).toUpperCase() }}
+        <!-- Level 2: 比赛列表 -->
+        <div v-else class="animate-fade-in-up space-y-4 max-w-5xl mx-auto" v-loading="loading">
+            <div v-if="!loading && matches.length === 0" class="text-center py-20 text-gray-400 bg-white rounded-xl border border-gray-100">
+               暂无比赛记录
             </div>
+            <div 
+              v-for="match in matches" 
+              :key="match.id"
+              class="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-300 transition-all cursor-pointer flex items-center justify-between group"
+              @click="goToMatch(match.id)"
+            >
+                <div class="flex flex-col w-32 border-r border-gray-100 pr-4">
+                  <span class="text-sm font-bold text-gray-800">{{ match.tournamentName.split('/')[1].toUpperCase() }}</span>
+                  <span class="text-xs text-gray-400 mt-0.5">{{ match.stage }}</span>
+                  <span class="text-xs text-gray-300 font-mono mt-1">{{ match.date }}</span>
+                </div>
+                <div class="flex-1 flex items-center justify-center px-8">
+                   <div class="flex-1 text-right font-bold text-lg text-gray-800" :class="{'text-blue-600': match.winnerId === match.team1Id}">
+                      {{ match.team1Name }}
+                   </div>
+                   <div class="mx-6 px-4 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xl font-bold font-mono text-slate-700">
+                      {{ match.scoreTeam1 }} : {{ match.scoreTeam2 }}
+                   </div>
+                   <div class="flex-1 text-left font-bold text-lg text-gray-800" :class="{'text-blue-600': match.winnerId === match.team2Id}">
+                      {{ match.team2Name }}
+                   </div>
+                </div>
+                <div class="text-gray-300 group-hover:text-blue-500 transition-colors">
+                   <span class="text-sm mr-2 opacity-0 group-hover:opacity-100 transition-opacity">详情</span>
+                   <span class="text-lg">→</span>
+                </div>
+            </div>
+        </div>
+
+      </div>
+
+      <!-- MODE: TEAMS -->
+      <div v-else-if="viewMode === 'teams'" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 animate-fade-in">
+         <div v-for="team in teams" :key="team.id" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group cursor-pointer flex flex-col items-center">
+             <div class="w-12 h-12 bg-gray-50 rounded-lg flex items-center justify-center font-bold text-gray-400 mb-3 group-hover:bg-blue-50 group-hover:text-blue-600">{{ team.shortName[0] }}</div>
+             <div class="text-lg font-bold text-gray-800">{{ team.shortName }}</div>
+             <div class="text-xs text-gray-400">{{ team.name }}</div>
+        </div>
+      </div>
+
+      <!-- MODE: PLAYERS -->
+      <div v-else class="grid grid-cols-1 md:grid-cols-4 gap-4 animate-fade-in">
+         <div v-for="player in players" :key="player.id" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:border-blue-300 transition-all flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 text-sm font-bold">{{ player.name[0] }}</div>
             <div>
-              <div class="font-bold text-lg text-gray-800">{{ player.playerId }}</div>
-              <div class="text-sm text-gray-500 mt-1 flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-green-400"></span>
-                {{ player.role || 'Unknown' }}
-              </div>
+               <div class="font-bold text-gray-800 text-sm">{{ player.name }}</div>
+               <div class="text-xs text-gray-400">ID: {{ player.id }}</div>
             </div>
-          </div>
-        </div>
+         </div>
       </div>
+
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 移除旧的 hacky 样式，使用 Tailwind 类代替 */
-:deep(.el-input__wrapper) {
-  border-radius: 8px;
+.animate-fade-in { animation: fadeIn 0.4s ease-out; }
+.animate-fade-in-up { animation: fadeInUp 0.4s ease-out; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+:deep(.el-input__wrapper), :deep(.el-select__wrapper) {
   box-shadow: none !important;
   border: 1px solid #e5e7eb;
-  transition: all 0.2s;
+  background-color: #fff;
+  border-radius: 6px;
 }
-:deep(.el-input__wrapper:hover) {
+:deep(.el-input__wrapper:hover), :deep(.el-select__wrapper:hover) {
   border-color: #3b82f6;
 }
-:deep(.el-input__wrapper.is-focus) {
+:deep(.el-input__wrapper.is-focus), :deep(.el-select__wrapper.is-focused) {
   border-color: #3b82f6;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1) !important;
-}
-
-:deep(.el-date-editor.el-input__wrapper) {
-  width: 100%;
 }
 </style>
