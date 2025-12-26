@@ -7,7 +7,7 @@ def get_all_tools():
     获取所有注册的工具列表
     """
     return [
-        rag_search,
+        # rag_search,
         db_query,
         serper_search,
     ]

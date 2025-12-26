@@ -49,12 +49,12 @@ class Orchestrator:
             # 数据库可能不覆盖全部，需要网页兜底
             tasks.append({"name": "search_agent", "tool": "serper", "input": query})
         if is_lore and not is_db:
-            tasks.append({"name": "retrieve_domain", "tool": "rag", "input": query})
+            # tasks.append({"name": "retrieve_domain", "tool": "rag", "input": query})
             tasks.append({"name": "search_agent", "tool": "serper", "input": query})
         if not tasks:
             # 默认全链路
             tasks.extend([
-                {"name": "retrieve_domain", "tool": "rag", "input": query},
+                # {"name": "retrieve_domain", "tool": "rag", "input": query},
                 {"name": "search_agent", "tool": "serper", "input": query},
                 {"name": "sql_query", "tool": "sql_agent", "input": query},
             ])
