@@ -6,27 +6,80 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain.schema import HumanMessage, SystemMessage
 
 from src.llms.qwen_llm import get_qwen_llm
+from src.llms.deepseek_llm import get_deepseek_llm
 from src.tools.custom_tools.db_tool import db_query
 from src.tools.custom_tools.serper_tool import serper_search
 
 
 DB_SCHEMA_DESC = (
-    "数据库包含以下表（字段名严格区分大小写，以 SQL 为准）：\n"
-    "- Teams(id, name, short_name, region)\n"
-    "- Players(id, name)\n"
-    "- Matches(id, match_date, tournament_name, stage, team1_id, team2_id, winner_id)\n"
-    "- Games(id, match_id, game_number, duration, blue_team_id, red_team_id, winner_id)\n"
-    "- PlayerGameStats(id, game_id, player_id, team_id, position, champion_name, champion_name_en, "
-    "player_level, kills, deaths, assists, kda, kill_participation, total_damage_dealt, "
-    "damage_dealt_to_champions, damage_dealt_percentage, total_damage_taken, damage_taken_percentage, "
-    "gold_earned, minions_killed, is_mvp)\n"
-    "常用关联关系：\n"
-    "- Matches.team1_id/team2_id/winner_id -> Teams.id\n"
-    "- Games.match_id -> Matches.id；Games.blue_team_id/red_team_id/winner_id -> Teams.id\n"
-    "- PlayerGameStats.game_id -> Games.id；player_id -> Players.id；team_id -> Teams.id\n"
-    "注意：该库用于赛事结构化数据查询，不包含英雄背景故事、技能描述或版本改动等百科类内容。"
+    "当前 MySQL 数据库包含 5 个核心表（大小写敏感）：\n\n"
+    
+    "1. `Teams` (战队表)\n"
+    "   - 字段: id (PK), name (全称), short_name (简称, 如 'GEN', 'BLG', 'T1')\n"
+    "   - 查询技巧: 总是优先使用 short_name 进行匹配。\n\n"
+    
+    "2. `Players` (选手表)\n"
+    "   - 字段: id (PK), name (游戏ID, 唯一, 如 'Faker', 'Bin')\n\n"
+    
+    "3. `Matches` (大场信息表)\n"
+    "   - 字段: id (PK), match_date, team1_id, team2_id, winner_id, tournament_name, stage\n"
+    "   - 【重要】tournament_name (赛事名) 结构为 'YY/赛区/赛事'。\n"
+    "   - 【2025年赛制映射字典 (必须严格遵守)】:\n"
+    "       (1) 全球赛事:\n"
+    "           - '2025年全球先锋赛' / 'First Stand' -> LIKE '25/全球先锋赛%'\n"
+    "           - '2025年MSI' -> LIKE '25/m%'\n"
+    "           - '2025年S赛' / '世界赛' -> LIKE '25/s%'\n"
+    "       (2) LCK 赛区 (2025):\n"
+    "           - '2025 LCK杯' -> LIKE '25/lck/lck杯%'\n"
+    "           - '2025 LCK春季赛' / '第一赛段' -> LIKE '25/lck/第一赛段%'\n"
+    "           - '2025 LCK夏季赛' / '第二赛段' -> LIKE '25/lck/第二赛段%'\n"
+    "       (3) LPL 赛区 (2025 改为三赛段制):\n"
+    "           - '2025 LPL春季赛' / '第一赛段' -> LIKE '25/lpl/第一赛段%'\n"
+    "           - '2025 LPL第二赛段' -> LIKE '25/lpl/第二赛段%'\n"
+    "           - '2025 LPL夏季赛' / '第三赛段' -> LIKE '25/lpl/第三赛段%'\n"
+    "       (4) 历史赛事 (2024及以前):\n"
+    "           - 春季赛 -> LIKE '%/春季赛%'\n"
+    "           - 夏季赛 -> LIKE '%/夏季赛%'\n"
+    "           - S赛 -> LIKE '%/s%' (注意: 格式为 'YY/s')\n\n"
+    "   - 【S赛(全球总决赛) 赛段特殊处理 (必须阅读)】:\n"
+    "       * 数据现状: S赛的 stage 字段命名不统一。\n"
+    "         - 绝大多数年份 (14-15, 17-23, 25): 八强/半决/决赛 统称为 '淘汰'。\n"
+    "         - 特殊年份 (16, 24): 包含 '半决', '总决', '淘汰-四强' 等细分。\n"
+    "       * **查询策略 (Golden Rules)**:\n"
+    "         1. **查特定对阵 (H2H)**: 如 '23年S赛 T1打JDG'，**严禁过滤 stage**！只过滤 tournament_name 和 teams 即可锁定比赛。\n"
+    "         2. **查泛淘汰赛**: 如 '23年S赛淘汰赛数据'，使用 `AND (stage LIKE '%淘汰%' OR stage LIKE '%半决%' OR stage LIKE '%总决%' OR stage LIKE '%四强%')` 以兼容所有年份。\n"
+    "         3. **查小组赛/瑞士轮**: 可以安全使用 `LIKE '%小组%'` 或 `LIKE '%瑞士%'`。\n\n"
+    
+    "4. `Games` (小局信息表 - **红蓝方计算核心**)\n"
+    "   - 字段: id (PK), match_id, game_number, winner_id\n"
+    "   - 【关键字段】: blue_team_id (蓝方战队ID), red_team_id (红方战队ID)\n"
+    "   - 注意: 计算红蓝方胜率必须使用此表的 blue_team_id 和 red_team_id，严禁使用 Matches 表的 team1/2。\n\n"
+    
+    "5. `PlayerGameStats` (选手单局表现表)\n"
+    "   - 关联: game_id, player_id, team_id\n"
+    "   - 统计字段: kills, deaths, assists, total_damage_to_champions (伤害), gold_earned (经济)\n\n"
+    
+    "【SQL 逻辑与默认规则 (必须遵守)】\n"
+    "1. **默认范围原则**: \n"
+    "   - 若用户只提年份(如'25年')没提赛事，则默认该年所有赛事 (LIKE '25/%')。\n"
+    "   - 若用户指定赛事但没提阶段(如'25年LPL第三赛段')，则不筛选 stage 字段，包含该赛事下季后赛/常规赛等所有记录。\n"
+    "2. **队伍间对阵 (Head-to-Head)**: \n"
+    "   - 必须使用双 JOIN Teams (T_A, T_B)。\n"
+    "   - WHERE ((M.team1_id=T_A.id AND M.team2_id=T_B.id) OR (M.team1_id=T_B.id AND M.team2_id=T_A.id))\n"
+    "3. **战队详细胜负**: \n"
+    "   - 胜场: SUM(CASE WHEN winner_id=T.id THEN 1 ELSE 0 END)\n"
+    "   - 败场: SUM(CASE WHEN winner_id!=T.id THEN 1 ELSE 0 END)\n"
+    "   - 胜率: (胜场 * 100.0 / 总场数)\n"
+    "4. **选手特定赛事数据 (4表联查)**: \n"
+    "   - 路径: Players -> PlayerGameStats -> Games -> Matches\n"
+    "   - 范式: FROM PlayerGameStats PGS JOIN Players P ON ... JOIN Games G ON ... JOIN Matches M ON ...\n"
+    "   - KDA公式: SUM(PGS.kills + PGS.assists) / NULLIF(SUM(PGS.deaths), 0)\n"
+    "5. **红蓝方胜率公式 (修正版)**: \n"
+    "   - 必须关联 Games 和 Matches (Matches用于筛选赛事)。\n"
+    "   - 蓝方胜: CASE WHEN G.winner_id = G.blue_team_id THEN 1 ELSE 0 END\n"
+    "   - 红方胜: CASE WHEN G.winner_id = G.red_team_id THEN 1 ELSE 0 END\n"
+    "   - SQL示例: SELECT SUM(CASE WHEN G.winner_id = G.blue_team_id THEN 1 ELSE 0 END) * 100.0 / COUNT(*) ...\n"
 )
-
 
 @dataclass
 class _LLMResponse:
@@ -108,12 +161,11 @@ class Orchestrator:
             self.llm = llm
         else:
             try:
-                self.llm = get_qwen_llm()
+                self.llm = get_deepseek_llm()
             except Exception:
                 # Tests/local runs may not have API keys.
                 self.llm = _OfflineStubLLM()
-        self.model_name = getattr(self.llm, "model_name", getattr(self.llm, "model", "qwen-plus"))
-
+        self.model_name = getattr(self.llm, "model_name", getattr(self.llm, "model", "deepseek"))
     def _search(self, query: str) -> str:
         # Use StructuredTool.invoke to avoid LangChain __call__ deprecation warnings
         try:
@@ -124,18 +176,51 @@ class Orchestrator:
     def _nl2sql(self, query: str, search_context: str) -> Dict[str, Any]:
         """Use LLM to convert (query + web context) -> strict JSON: {"sql":"..."}."""
         system = (
-            "你是一个 NL2SQL 生成器。\n"
-            "你必须【只输出一行 JSON】且 JSON 必须能被 json.loads 解析。\n"
-            "严禁输出 Markdown、解释文字、代码块、或多行内容。\n\n"
-            "输出格式（严格）：{\"sql\": \"...\"}\n"
-            "规则：\n"
-            "1) 如果用户问题不需要数据库，或数据库无法回答，输出 {\"sql\":\"NO_SQL\"}\n"
-            "2) 只能输出单条 SELECT 语句；禁止 INSERT/UPDATE/DELETE/DDL；禁止注释；禁止分号；\n"
-            f"3) 只能使用以下表/字段：{DB_SCHEMA_DESC}\n"
-            "4) 默认查询返回行数不超过 50（必要时加 LIMIT 50）。\n"
-            "5) 模糊匹配用 LIKE（例如 name LIKE '%xxx%'）。\n"
-            "6) 计数类问题用 COUNT(*)。\n"
-        )
+                "你是一个 NL2SQL 生成器。\n"
+                "你必须【只输出一行 JSON】且 JSON 必须能被 json.loads 解析。\n"
+                "严禁输出 Markdown、解释文字、代码块、或多行内容。\n\n"
+                "输出格式（严格）：{\"sql\": \"...\"}\n"
+                "规则：\n"
+                "1) 如果用户问题不需要数据库，或数据库无法回答，输出 {\"sql\":\"NO_SQL\"}\n"
+                "2) 只能输出单条 SELECT 语句；禁止 INSERT/UPDATE/DELETE/DDL；禁止注释；禁止分号；\n"
+                f"3) 只能使用以下表/字段：{DB_SCHEMA_DESC}\n"
+                "4) 默认查询返回行数不超过 50（必要时加 LIMIT 50）。\n"
+                "5) 模糊匹配用 LIKE（例如 name LIKE '%xxx%'）。\n"
+                "6) 计数类问题用 COUNT(*)。\n\n"
+
+                "【思维链示例 (Chain of Thought)】\n\n"
+                
+                "Case 1: 战队对战 (指定赛事与阶段)\n"
+                "用户: '25年LPL夏季赛季后赛 BLG 打 TES 的胜率'\n"
+                "思考: 1.映射: 25 LPL夏季赛 -> '第三赛段'。2.范围: 季后赛 -> stage LIKE '%季后%'。3.对阵: H2H双表关联。\n"
+                "SQL: SELECT SUM(CASE WHEN M.winner_id = T_A.id THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) AS win_rate FROM Matches M JOIN Teams T_A ON T_A.short_name='BLG' JOIN Teams T_B ON T_B.short_name='TES' WHERE ((M.team1_id=T_A.id AND M.team2_id=T_B.id) OR (M.team1_id=T_B.id AND M.team2_id=T_A.id)) AND M.tournament_name LIKE '%25/lpl/第三赛段%' AND M.stage LIKE '%季后%'\n\n"
+                
+                "Case 2: 战队综合胜负 (只指定年份，默认全赛事)\n"
+                "用户: 'GenG 25年的胜负场情况'\n"
+                "思考: 1.范围: 用户仅说'25年' -> LIKE '25/%' (包含春/夏/MSI/S赛)。2.指标: 胜场、败场、胜率。\n"
+                "SQL: SELECT T.short_name, SUM(CASE WHEN M.winner_id = T.id THEN 1 ELSE 0 END) as wins, SUM(CASE WHEN M.winner_id != T.id THEN 1 ELSE 0 END) as losses, COUNT(*) as total_games FROM Matches M JOIN Teams T ON (M.team1_id = T.id OR M.team2_id = T.id) WHERE T.short_name = 'GEN' AND M.tournament_name LIKE '25/%'\n\n"
+                
+                "Case 3: 选手特定赛事数据 (4表联查)\n"
+                "用户: 'Faker 25年S赛的总KDA'\n"
+                "思考: 1.对象: Faker (Players)。2.赛事: 25年S赛 -> LIKE '%25/s%' (Matches)。3.路径: P->PGS->G->M。4.计算: KDA公式。\n"
+                "SQL: SELECT SUM(PGS.kills) as total_kills, SUM(PGS.deaths) as total_deaths, SUM(PGS.assists) as total_assists, (SUM(PGS.kills)+SUM(PGS.assists))/NULLIF(SUM(PGS.deaths),0) as kda FROM PlayerGameStats PGS JOIN Players P ON PGS.player_id = P.id JOIN Games G ON PGS.game_id = G.id JOIN Matches M ON G.match_id = M.id WHERE P.name = 'Faker' AND M.tournament_name LIKE '%25/s%'\n"
+                
+                "Case 4: 红蓝方胜率 (使用Games表字段)\n"
+                "用户: '25年MSI红蓝方胜率情况'\n"
+                "思考: 1.筛选: Matches表筛选赛事 '25/m%'。2.关联: Join Games表。3.计算: 使用 Games.blue_team_id 和 Games.red_team_id 判断小局胜负。\n"
+                "SQL: SELECT SUM(CASE WHEN G.winner_id = G.blue_team_id THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as blue_win_rate, SUM(CASE WHEN G.winner_id = G.red_team_id THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as red_win_rate, COUNT(*) as total_games FROM Games G JOIN Matches M ON G.match_id = M.id WHERE M.tournament_name LIKE '%25/m%'\n"
+
+                "Case 5: S赛特定对阵 (防御性策略)\n"
+                "用户: '23年S赛半决赛 T1 打 JDG 的结果'\n"
+                "思考: 1.赛区: 23年S赛 -> '%23/s%'。2.陷阱: 23年S赛数据将半决赛统称为'淘汰'，没有'半决'字段。3.策略: 既然锁定了 T1 和 JDG，直接双表关联队伍即可，**丢弃 stage 过滤**以防止漏查。\n"
+                "SQL: SELECT M.match_date, T_W.short_name as winner FROM Matches M JOIN Teams T_A ON T_A.short_name='T1' JOIN Teams T_B ON T_B.short_name='JDG' LEFT JOIN Teams T_W ON M.winner_id = T_W.id WHERE ((M.team1_id=T_A.id AND M.team2_id=T_B.id) OR (M.team1_id=T_B.id AND M.team2_id=T_A.id)) AND M.tournament_name LIKE '%23/s%'\n\n"
+                
+                "Case 6: S赛泛淘汰赛阶段统计 (兼容性写法)\n"
+                "用户: 'Faker 16年S赛淘汰赛阶段的击杀数'\n"
+                "思考: 16年S赛 stage 区分了'半决/总决'，不能只查'淘汰'。使用 OR 逻辑兼容所有细分名称。\n"
+                "SQL: SELECT SUM(PGS.kills) FROM PlayerGameStats PGS JOIN Players P ON PGS.player_id = P.id JOIN Games G ON PGS.game_id = G.id JOIN Matches M ON G.match_id = M.id WHERE P.name = 'Faker' AND M.tournament_name LIKE '%16/s%' AND (M.stage LIKE '%淘汰%' OR M.stage LIKE '%半决%' OR M.stage LIKE '%总决%' OR M.stage LIKE '%四强%')\n"   
+            )
+
         web_ctx = _truncate(search_context, 1800)
         user = (
             f"用户问题: {query}\n"
