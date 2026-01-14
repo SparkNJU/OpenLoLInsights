@@ -51,9 +51,6 @@ Authorization: Bearer <可选，当前不校验>
 }
 ```
 
-补充：当前 Orchestrator 会按固定阶段调用工具（详见 2.3 SSE/2.4 非流式返回的 steps），典型为：
-`serper_search`（Web 搜索）→ LLM 生成 NL2SQL（严格 JSON 格式）→ `db_query`（执行 SELECT）→ LLM 汇总输出。
-
 ### 2.3 SSE 流式对话（核心）
 
 #### 2.3.1 接口信息
@@ -104,13 +101,7 @@ event: meta
 data: {"traceId":"t_001","sessionId":"s_abc123","model":"qwen-plus","mode":"report","startedAt":"2025-12-26T00:00:00Z"}
 
 event: data
-data: {"type":"step","detail": {"step":"search","tool":"serper_search","input":"...","output":"..."}}
-
-event: data
-data: {"type":"step","detail": {"step":"nl2sql","tool":"llm","input":"...","output": {"sql":"SELECT ..."}}}
-
-event: data
-data: {"type":"step","detail": {"step":"db_query","tool":"db_query","input":"SELECT ...","output":"{...}"}}
+data: {"type":"step","detail": {"tool":"rag_search","input":"...","output":"..."}}
 
 event: token
 data: {"delta":"（报告正文第1段...）"}
@@ -199,17 +190,3 @@ curl -X POST http://localhost:8000/api/v1/ai/chat/query \
   -H "Content-Type: application/json" \
   -d '{"sessionId":"s_abc123","traceId":"t_001","mode":"report","query":"生成一份赛事经济差分析报告"}'
 ```
-
-#### 2.3.5 数据库 Schema（当前实现依赖）
-服务端的 NL2SQL 与 DB 查询阶段依赖以下结构化表（用于赛事/对局/选手数据统计）：
-
-- `Teams(id, name, short_name, region)`
-- `Players(id, name)`
-- `Matches(id, match_date, tournament_name, stage, team1_id, team2_id, winner_id)`
-- `Games(id, match_id, game_number, duration, blue_team_id, red_team_id, winner_id)`
-- `PlayerGameStats(id, game_id, player_id, team_id, position, champion_name, champion_name_en, player_level, kills, deaths, assists, kda, kill_participation, total_damage_dealt, damage_dealt_to_champions, damage_dealt_percentage, total_damage_taken, damage_taken_percentage, gold_earned, minions_killed, is_mvp)`
-
-常用外键/关联：
-- `Matches.team1_id/team2_id/winner_id -> Teams.id`
-- `Games.match_id -> Matches.id`；`Games.blue_team_id/red_team_id/winner_id -> Teams.id`
-- `PlayerGameStats.game_id -> Games.id`；`player_id -> Players.id`；`team_id -> Teams.id`
