@@ -61,11 +61,11 @@ public class ChatController {
     }
 
     /**
-     * 2.4 历史消息：当前实现调用 AI 端 history 并透传。
+     * 2.4 历史消息：后端本地实现
      */
     @PostMapping("/history")
     public ApiResponse<Map<String, Object>> history(@Valid @RequestBody ChatHistoryRequest req) {
-        Map<String, Object> data = chatHistoryService.historyFromAgent(extractBearerToken(), req.getSessionId(), req.getPage(), req.getPageSize());
+        Map<String, Object> data = chatHistoryService.history(req.getSessionId(), req.getPage(), req.getPageSize());
         return ApiResponse.ok(data, TraceIdUtil.getOrCreate());
     }
 
@@ -80,4 +80,3 @@ public class ChatController {
         return auth;
     }
 }
-

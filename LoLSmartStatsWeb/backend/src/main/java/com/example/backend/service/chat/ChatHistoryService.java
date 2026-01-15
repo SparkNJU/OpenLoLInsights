@@ -1,28 +1,25 @@
 package com.example.backend.service.chat;
 
-import com.example.backend.exception.BizException;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
+import com.example.backend.entity.ChatMessage;
+import com.example.backend.repository.ChatMessageRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.BodyInserters;
-import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class ChatHistoryService {
 
-    private final WebClient webClient;
-    private final String apiKey;
+    private final ChatMessageRepository chatMessageRepository;
 
-    public ChatHistoryService(WebClient.Builder builder,
-                              @Value("${app.ai.base-url}") String baseUrl,
-                              @Value("${app.ai.api-key}") String apiKey) {
-        this.webClient = builder.baseUrl(baseUrl).build();
-        this.apiKey = apiKey;
+    public ChatHistoryService(ChatMessageRepository chatMessageRepository) {
+        this.chatMessageRepository = chatMessageRepository;
     }
 
     /**
@@ -37,28 +34,42 @@ public class ChatHistoryService {
     }
 
     /**
-     * 2.4 历史消息：调用 AI 端 /api/v1/ai/chat/history 透传。
+     * 2.4 历史消息：后端本地落库并分页读取。
      */
-    public Map<String, Object> historyFromAgent(String accessToken, String sessionId, int page, int pageSize) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("sessionId", sessionId);
-        payload.put("page", page);
-        payload.put("pageSize", pageSize);
+    public Map<String, Object> history(String sessionId, int page, int pageSize) {
+        int p = Math.max(page, 1);
+        int ps = Math.max(pageSize, 1);
 
-        Map<String, Object> res = webClient.post()
-                .uri("/chat/history")
-                .header("X-AI-API-Key", apiKey)
-                .header("Authorization", "Bearer " + accessToken)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON)
-                .body(BodyInserters.fromValue(payload))
-                .retrieve()
-                .bodyToMono(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {})
-                .block();
+        Page<ChatMessage> msgPage = chatMessageRepository.findBySessionIdOrderByCreatedAtAsc(
+                sessionId,
+                PageRequest.of(p - 1, ps)
+        );
 
-        if (res == null) {
-            throw new BizException("AI_SERVICE_ERROR", "AI 历史接口无响应");
-        }
-        return res;
+        List<Map<String, Object>> items = msgPage.getContent().stream().map(m -> {
+            Map<String, Object> it = new HashMap<>();
+            it.put("mode", m.getMode());
+            it.put("role", m.getRole());
+            it.put("content", m.getContent());
+            it.put("ts", m.getCreatedAt() == null ? null : m.getCreatedAt().toString());
+
+            if ("assistant".equals(m.getRole()) && m.getReportFileId() != null && !m.getReportFileId().isBlank()) {
+                Map<String, Object> reportMeta = new HashMap<>();
+                reportMeta.put("fileId", m.getReportFileId());
+                reportMeta.put("fileName", m.getReportFileName());
+                reportMeta.put("fileType", m.getReportFileType());
+                reportMeta.put("size", m.getReportSize());
+                it.put("reportMeta", reportMeta);
+                // 前端可直接使用此链接作为下载入口（也可自行拼接）
+                it.put("downloadUrl", "/api/v1/chat/files/" + m.getReportFileId() + "?sessionId=" + m.getSessionId());
+            }
+            return it;
+        }).collect(Collectors.toList());
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("total", msgPage.getTotalElements());
+        data.put("page", p);
+        data.put("pageSize", ps);
+        data.put("items", items);
+        return data;
     }
 }

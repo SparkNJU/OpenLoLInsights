@@ -21,7 +21,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleBiz(BizException e) {
         HttpStatus status;
         String code = e.getCode();
-        if ("INVALID_ARGUMENT".equals(code)) {
+
+        if ("INVALID_ARGUMENT".equals(code) || "AI_INVALID_ARGUMENT".equals(code)) {
             status = HttpStatus.BAD_REQUEST;
         } else if ("UNAUTHORIZED".equals(code)) {
             status = HttpStatus.UNAUTHORIZED;
@@ -31,6 +32,9 @@ public class GlobalExceptionHandler {
             status = HttpStatus.NOT_FOUND;
         } else if ("CONFLICT".equals(code)) {
             status = HttpStatus.CONFLICT;
+        } else if (code != null && code.startsWith("AI_")) {
+            // 上游（agent/LLM）错误默认视为 502，避免前端误以为是业务 400
+            status = HttpStatus.BAD_GATEWAY;
         } else {
             status = HttpStatus.BAD_REQUEST;
         }
@@ -57,6 +61,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleOther(Exception e) {
+        // 至少打印堆栈，避免日志里只剩 Tomcat /error
+        e.printStackTrace();
         ApiError err = new ApiError("INTERNAL_ERROR", "服务器内部错误");
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.fail(err, TraceIdUtil.getOrCreate()));
     }
