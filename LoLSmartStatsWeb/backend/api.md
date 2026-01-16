@@ -1,33 +1,31 @@
+# LoLSmartStatsWeb Backend API 文档
+
+> Base URL：`http://localhost:8080`  \
+> API Prefix：`/api/v1`
+
+---
+
 ## 0. 全局约定
 
-### Base URL
+### 0.1 鉴权
 
-```
-/api/v1
-```
-
-### 鉴权
-
-- 使用 **JWT Access Token（短期） + Refresh Token（长期）**
-- 需要鉴权的接口：除 `/auth/*` 外的所有业务接口（如 `/users/me`、`/chat/*`、`/data/*`、`/metrics/*`）
+- 除 `/api/v1/auth/*` 外，其它接口默认需要携带 JWT。
 - 请求头：
 
 ```
 Authorization: Bearer <accessToken>
 ```
 
-- Access Token 过期：前端使用 Refresh Token 调用 `/auth/refresh` 刷新后重试原请求。
+### 0.2 Content-Type
 
-### Content-Type
+- 普通 JSON：`application/json`
+- SSE：`text/event-stream`
+- 文件下载：`application/octet-stream`
 
-- 普通 JSON 接口：`application/json`
-- SSE 流式接口：`text/event-stream; charset=utf-8`
+### 0.3 统一响应结构（除 SSE/文件下载外）
 
-### 统一成功响应结构（JSON 接口）
-
-> 除 SSE 流式接口外，后端建议统一包装为 `ApiResponse<T>`。
-
-```
+成功：
+```json
 {
   "ok": true,
   "data": {},
@@ -35,16 +33,8 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-字段说明：
-- `ok`：是否成功
-- `data`：业务数据
-- `traceId`：链路追踪 ID（便于定位日志）
-
-### 统一错误结构（除流式接口外）
-
-> 对应 `ApiError`，由全局异常处理器统一返回。
-
-```
+失败：
+```json
 {
   "ok": false,
   "error": {
@@ -56,75 +46,51 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-### 错误码约定（建议）
+### 0.4 常用错误码（建议前端统一处理）
 
-| code | 说明 | 常见 HTTP 状态码 |
+| code | 含义 | 常见 HTTP |
 |---|---|---|
-| `INVALID_ARGUMENT` | 参数校验失败/格式错误 | 400 |
-| `UNAUTHORIZED` | 未登录/Token 无效 | 401 |
-| `FORBIDDEN` | 无权限 | 403 |
-| `NOT_FOUND` | 资源不存在 | 404 |
-| `CONFLICT` | 冲突（如邮箱已注册） | 409 |
-| `RATE_LIMITED` | 频率限制 | 429 |
-| `INTERNAL_ERROR` | 服务器内部错误 | 500 |
+| INVALID_ARGUMENT | 参数缺失/格式错误 | 400 |
+| UNAUTHORIZED | 未登录/Token 无效或过期 | 401 |
+| FORBIDDEN | 无权限 | 403 |
+| NOT_FOUND | 资源不存在 | 404 |
+| AI_SERVICE_ERROR | 上游 AI 服务错误 | 502/500 |
+| INTERNAL_ERROR | 未知内部错误 | 500 |
 
-### 分页约定
+### 0.5 时间格式约定（重要）
 
-**Request**
+- `/api/v1/chat/sessions/list` 的 `from/to`：后端用 `Instant.parse()`，必须传 **ISO-8601**，例如：
+  - `2026-01-15T00:00:00Z`
+- 其它业务里如有 `dateRange.from/to`（例如 match 搜索），建议统一使用 `YYYY-MM-DD` 或 ISO-8601 字符串（数据库可能是 varchar，按字符串比较/容错解析）。
 
-```
-{ "page": 1, "pageSize": 20 }
-```
+---
 
-- `page`：从 1 开始
-- `pageSize`：建议 10~100
-
-**Response**
-
-```
-{
-  "items": [],
-  "page": 1,
-  "pageSize": 20,
-  "total": 0
-}
-```
-
-------
-
-## 1. 用户注册 / 登录 / 用户信息（Auth）
-
-> 模块涉及表：`users`、`refresh_tokens`。
+## 1. Auth 模块（4）
 
 ### 1.1 注册
 
-**POST** `/api/v1/auth/register`
+- **POST** `/api/v1/auth/register`
+- **描述**：使用邮箱+密码注册，返回用户信息与 token。
 
 **Request**
-
-```
+```json
 {
-  "email": "a@b.com",
-  "password": "******",
-  "nickname": "xxx"
+  "email": "test001@example.com",
+  "password": "123456",
+  "nickname": "test001"
 }
 ```
 
-字段说明：
-- `email`：唯一邮箱
-- `password`：明文仅用于注册入参；服务端存储 `password_hash`
-- `nickname`：昵称
-
-**Response（200）**
-
-```
+**Response**
+```json
 {
   "ok": true,
   "data": {
     "user": {
-      "userId": "u_123",
-      "email": "a@b.com",
-      "nickname": "xxx"
+      "userId": "u_xxx",
+      "email": "test001@example.com",
+      "nickname": "test001",
+      "avatar": null
     },
     "tokens": {
       "accessToken": "jwt...",
@@ -135,37 +101,31 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-可能错误：
-- 409 `CONFLICT`：邮箱已注册
-- 400 `INVALID_ARGUMENT`：参数不合法
-
-------
+---
 
 ### 1.2 登录
 
-**POST** `/api/v1/auth/login`
+- **POST** `/api/v1/auth/login`
+- **描述**：邮箱+密码登录。
 
 **Request**
-
-```
+```json
 {
-  "email": "a@b.com",
-  "password": "******"
+  "email": "test001@example.com",
+  "password": "123456"
 }
 ```
 
-**Response（200）**
-
-> 与注册一致（`user + tokens`）。
-
-```
+**Response**（同注册）
+```json
 {
   "ok": true,
   "data": {
     "user": {
-      "userId": "u_123",
-      "email": "a@b.com",
-      "nickname": "xxx"
+      "userId": "u_xxx",
+      "email": "test001@example.com",
+      "nickname": "test001",
+      "avatar": null
     },
     "tokens": {
       "accessToken": "jwt...",
@@ -176,24 +136,22 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-可能错误：
-- 401 `UNAUTHORIZED`：邮箱或密码错误
-
-------
+---
 
 ### 1.3 刷新 Token
 
-**POST** `/api/v1/auth/refresh`
+- **POST** `/api/v1/auth/refresh`
+- **描述**：使用 refreshToken 换取新的 token（access/refresh）。
 
 **Request**
-
+```json
+{
+  "refreshToken": "jwt..."
+}
 ```
-{ "refreshToken": "jwt..." }
-```
 
-**Response（200）**
-
-```
+**Response**
+```json
 {
   "ok": true,
   "data": {
@@ -204,28 +162,22 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-说明：
-- 服务端应校验 refresh token 是否存在、是否过期、是否 revoked
-- 可采用“旋转刷新”（refresh 时下发新的 refresh token，并吊销旧 token）
+---
 
-可能错误：
-- 401 `UNAUTHORIZED`：refresh token 无效/过期/已吊销
+### 1.4 登出
 
-------
-
-### 1.4 登出（使 Refresh Token 失效）
-
-**POST** `/api/v1/auth/logout`
+- **POST** `/api/v1/auth/logout`
+- **描述**：使 refreshToken 失效。
 
 **Request**
-
+```json
+{
+  "refreshToken": "jwt..."
+}
 ```
-{ "refreshToken": "jwt..." }
-```
 
-**Response（200）**
-
-```
+**Response**
+```json
 {
   "ok": true,
   "data": { "ok": true },
@@ -233,295 +185,433 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-说明：
-- 服务端将 refresh token 标记 `revoked = 1`
+---
 
-------
+## 2. User 模块（1）
 
-### 1.5 获取当前用户信息
+### 2.1 获取当前登录用户
 
-**GET** `/api/v1/users/me`（需要 Authorization）
+- **GET** `/api/v1/users/me`
+- **鉴权**：需要 `Authorization: Bearer <accessToken>`
+- **描述**：返回当前登录用户信息。
 
-**Response（200）**
-
-```
+**Response**
+```json
 {
   "ok": true,
   "data": {
-    "userId": "u_123",
-    "email": "a@b.com",
-    "nickname": "xxx",
-    "avatar": "https://..."
+    "userId": "u_xxx",
+    "email": "test001@example.com",
+    "nickname": "test001",
+    "avatar": null
   },
   "traceId": "t_xxx"
 }
 ```
 
-可能错误：
-- 401 `UNAUTHORIZED`：未携带或携带了无效 access token
+---
 
-------
+## 3. Chat 模块（9）
 
-## 2. 大模型问答（Chat）
+> 说明：Chat 模块对接 AI Agent，上游地址配置：`app.ai.base-url`；上游鉴权头：`X-AI-API-Key`（后端会自动带上）。
 
-### 协议选择
+### 3.1 创建会话
 
-- 使用 **SSE over POST**
-- Content-Type：
+- **POST** `/api/v1/chat/sessions`
+- **鉴权**：需要
+- **描述**：创建会话并落库，绑定当前用户。
 
-```
-text/event-stream; charset=utf-8
-```
-
-------
-
-### 2.1 创建会话（可选）
-
-**POST** `/api/v1/chat/sessions`
-
-```
-{ "title": "可选：前端传或后端自动生成" }
+**Request（可选；也可不传 body J）**
+```json
 {
-  "sessionId": "s_abc123",
-  "title": "xxx",
-  "createdAt": "..."
+  "title": "我的第一段分析"
 }
 ```
 
-------
-
-### 2.2 流式问答（核心）
-
-**POST** `/api/v1/chat/stream`
-
-```
+**Response（后端返回 Map；字段以实际 service 为准，前端按常用字段接）**
+```json
 {
-  "sessionId": "s_abc123",
-  "message": "2024 世界赛决赛谁赢了？关键原因是什么？",
+  "ok": true,
+  "data": {
+    "sessionId": "s_xxx",
+    "title": "我的第一段分析",
+    "createdAt": "2026-01-16T10:00:00Z"
+  },
+  "traceId": "t_xxx"
+}
+```
+
+---
+
+### 3.2 会话列表（分页+过滤）
+
+- **POST** `/api/v1/chat/sessions/list`
+- **鉴权**：需要
+- **描述**：分页查询会话；支持 `status/from/to` 过滤；`from/to` 必须 ISO-8601。
+
+**Request**
+```json
+{
+  "page": 1,
+  "pageSize": 20,
+  "status": "active",
+  "from": "2026-01-01T00:00:00Z",
+  "to": "2026-12-31T00:00:00Z"
+}
+```
+
+**Response（示例）**
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "sessionId": "s_xxx",
+        "title": "我的第一段分析",
+        "status": "active",
+        "createdAt": "2026-01-16T10:00:00Z",
+        "updatedAt": "2026-01-16T10:05:00Z"
+      }
+    ],
+    "page": 1,
+    "pageSize": 20,
+    "total": 1
+  },
+  "traceId": "t_xxx"
+}
+```
+
+---
+
+### 3.3 流式问答（SSE）
+
+- **POST** `/api/v1/chat/stream`
+- **鉴权**：需要
+- **返回**：`text/event-stream`
+- **描述**：SSE over POST，逐步返回模型输出。
+
+**Request**
+```json
+{
+  "sessionId": "s_xxx",
+  "message": "请分析一下这场比赛的关键胜负点",
   "mode": "data+analysis",
   "context": {
-    "tournamentId": "2024-worlds",
-    "dateRange": { "from": "2024-10-01", "to": "2024-12-01" },
-    "teamIds": ["T1", "BLG"],
-    "patch": "14.19"
+    "matchId": 58999
   }
 }
 ```
 
-### SSE 事件类型
-
-- `meta`：请求元信息
+**SSE 事件（前端需按 eventName 区分）**
+- `meta`：元信息
 - `token`：增量文本
-- `data`：结构化数据（图表 / 表格）
+- `data`：结构化数据（表格/图表等）
 - `done`：结束
 - `error`：错误
 
 示例：
-
 ```
 event: meta
-data: {"traceId":"t_001","sessionId":"s_abc123","model":"deepseek"}
+data: {"traceId":"t_xxx","sessionId":"s_xxx"}
 
 event: token
-data: {"delta":"决赛由 T1 以 3:2 获胜，"}
-
-event: data
-data: {"type":"chart","chartId":"gold_diff_15", ...}
+data: {"delta":"本场关键在于..."}
 
 event: done
 data: {"ok":true}
 ```
 
-------
+---
 
-### 2.3 非流式问答（调试用）
+### 3.4 非流式问答（一次性返回）
 
-**POST** `/api/v1/chat/query`
+- **POST** `/api/v1/chat/query`
+- **鉴权**：需要
+- **描述**：一次性返回完整结果（便于调试/兜底）。
 
-```
+**Request**
+```json
 {
-  "sessionId": "s_abc123",
-  "answer": "完整回答文本...",
-  "data": [],
-  "traceId": "t_001"
+  "sessionId": "s_xxx",
+  "message": "总结这场比赛的 MVP 与原因",
+  "mode": "analysis",
+  "context": {
+    "matchId": 58999
+  }
 }
 ```
 
-------
-
-### 2.4 历史消息
-
-**POST** `/api/v1/chat/history`
-
-```
-{ "sessionId": "s_abc123", "page": 1, "pageSize": 50 }
-```
-
-------
-
-## 3. 数据查询与展示（Data APIs）
-
-### 3.1 筛选项候选值
-
-**POST** `/api/v1/data/options`
-
-```
+**Response（示例）**
+```json
 {
-  "scope": { "tournamentId": "2024-worlds" },
-  "need": ["tournaments","teams","players","patches","stages"]
+  "ok": true,
+  "data": {
+    "answer": "...",
+    "data": [],
+    "sessionId": "s_xxx"
+  },
+  "traceId": "t_xxx"
 }
 ```
 
-------
+---
 
-### 3.2 比赛列表（分页）
+### 3.5 历史消息（POST）
 
-**POST** `/api/v1/matches/search`
+- **POST** `/api/v1/chat/history`
+- **鉴权**：需要
+- **描述**：分页查询会话历史消息。
 
-------
-
-### 3.3 比赛详情
-
-**POST** `/api/v1/matches/detail`
-
-------
-
-### 3.4 选手搜索
-
-**POST** `/api/v1/players/search`
-
-------
-
-## 4. 统计 / 图表接口（Metrics）
-
-### 4.1 统一指标接口
-
-**POST** `/api/v1/metrics/query`
-
-```
+**Request**
+```json
 {
-  "metric": "pickban",
-  "groupBy": ["champion"],
-  "filter": { "tournamentId": "2024-worlds" },
-  "limit": 50
+  "sessionId": "s_xxx",
+  "page": 1,
+  "pageSize": 50
 }
 ```
 
-------
-
-# 二、【重要】我认为你这份 API 里“不合理 / 高风险”的地方（逐条说明）
-
-下面是**我不会帮你偷偷改，但你作为后端负责人必须知道的点**。
-
-------
-
-## ⚠️ 问题 1：`player_game_stats` vs `PlayerGameStats` 双表问题（严重）
-
-**问题**
-
-- API 文档默认“指标数据”是单一来源
-- 但数据库里有 **两张结构重复的表**
-- API 层完全没有说明用哪一张
-
-**风险**
-
-- 后端 / Agent / SQL 写的人会用不同表
-- 同一个指标结果可能不一致
-
-**建议（不修改 API，只补文档）**
-
-> 在 API 文档补一句：
->  “所有 Metrics 接口统一以 `player_game_stats` 为主数据源。”
-
-------
-
-## ⚠️ 问题 2：`match_date` 是 varchar，但 API 当 date 用
-
-**问题**
-
--  API 里大量使用：
-
-```
-"dateRange": { "from": "...", "to": "..." }
-```
-
-- 但数据库是 `varchar(255)`
-
-**风险**
-
-- SQL 层需要大量字符串比较
-- 排序 / 区间过滤容易出 bug
-
-**建议**
-
-- 文档里 **明确约定 date 格式**
-- 或注明：后端会在查询层做 date parsing
-
-------
-
-## ⚠️ 问题 3：Chat Stream 没说明“断线/重连语义”
-
-**问题**
-
-- SSE 是长连接
-- 文档未说明：
-  - 前端断线怎么办？
-  - 是否支持 resume？
-
-**风险**
-
-- 前端和后端各自猜实现
-- 实际联调会吵架 😅
-
-**建议**
-
-- 在 Chat Stream 说明中补一句：
-
-> “当前版本不支持断点续传，断线需重新提问。”
-
-------
-
-## ⚠️ 问题 4：`context` 是强 schema，但又是自由结构
-
-**问题**
-
-```
-"context": {
-  "tournamentId": "...",
-  "teamIds": [],
-  "patch": "14.19"
+**Response（示例）**
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "role": "user",
+        "content": "请分析一下...",
+        "mode": "analysis",
+        "createdAt": "2026-01-16T10:00:10Z"
+      },
+      {
+        "role": "assistant",
+        "content": "好的，下面从...",
+        "mode": "analysis",
+        "createdAt": "2026-01-16T10:00:20Z",
+        "reportFileId": "file_xxx"
+      }
+    ],
+    "page": 1,
+    "pageSize": 50,
+    "total": 2
+  },
+  "traceId": "t_xxx"
 }
 ```
 
-**风险**
+---
 
-- 前端、后端、Agent 三方对字段理解不一致
-- Agent 很可能拿到 undefined
+### 3.6 历史消息（GET，调试用）
 
-**建议**
+- **GET** `/api/v1/chat/history?sessionId=s_xxx&page=1&pageSize=20`
+- **鉴权**：需要
+- **描述**：GET 版本用于避免某些客户端 Content-Type 误配。
 
-- 文档中明确：
+**Response**：同 POST `/chat/history`。
 
-> context 是**弱约束结构，字段可选，Agent 需做容错**
+---
 
-------
+### 3.7 下载报告文件
 
-## ⚠️ 问题 5：Metrics 返回结构过于自由（长期风险）
+- **GET** `/api/v1/chat/files/{fileId}`
+- **Query**：`sessionId` 可选
+- **鉴权**：可带（后端会把 `Authorization` 透传给上游 AI），同时后端会带 `X-AI-API-Key`。
+- **返回**：文件流 `application/octet-stream`，并设置 `Content-Disposition: attachment`。
 
-**问题**
-
+**示例**
 ```
-"series": [
-  { "name": "pickRate", "points": [...] }
-]
+GET /api/v1/chat/files/file_xxx?sessionId=s_xxx
 ```
 
-**风险**
+**前端建议**
+- 直接 `window.open(url)` 或用 `<a href>` 下载。
+- 若接口返回 JSON 错误（如 NOT_FOUND），前端提示“文件不存在/上游生成失败”。
 
-- 前端画图组件需要“约定式解析”
-- 不同 metric 返回形态不一致会导致前端 if-else 地狱
+---
 
-**建议**
+## 4. Data / Match / Player（6）
 
-- 不改接口
-- 但文档中给出 **推荐 series schema 规范**
+### 4.1 获取筛选项候选值
+
+- **POST** `/api/v1/data/options`
+- **描述**：返回筛选项候选值（赛事/阶段/队伍/选手/位置/英雄等）。
+
+**Request**
+```json
+{
+  "scope": {
+    "tournamentName": "Worlds 2024",
+    "stage": "Finals",
+    "dateRange": { "from": "2026-01-01", "to": "2026-12-31" }
+  },
+  "need": ["tournaments", "stages", "teams", "players", "positions", "champions"]
+}
+```
+
+**Response（示例）**
+```json
+{
+  "ok": true,
+  "data": {
+    "tournaments": ["Worlds 2024"],
+    "stages": ["Finals"],
+    "teams": [{ "id": 7, "name": "T1", "shortName": "T1", "region": "LCK" }],
+    "players": [{ "id": 90, "name": "Faker" }],
+    "positions": ["TOP", "JUNGLE", "MID", "ADC", "SUPPORT"],
+    "champions": [{ "name": "九尾妖狐", "nameEn": "the Nine-Tailed Fox" }]
+  },
+  "traceId": "t_xxx"
+}
+```
+
+---
+
+### 4.2 比赛列表搜索（分页）
+
+- **POST** `/api/v1/matches/search`
+- **鉴权**：需要
+- **描述**：按赛事/阶段/队伍/日期等筛选比赛列表。
+
+**Request**
+```json
+{
+  "page": 1,
+  "pageSize": 20,
+  "filter": {
+    "tournamentName": "Worlds 2024",
+    "stage": "Finals",
+    "teamIds": [7, 11],
+    "dateRange": { "from": "2026-01-01", "to": "2026-12-31" }
+  },
+  "sort": { "field": "matchDate", "order": "desc" }
+}
+```
+
+**Response（示例）**
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "matchId": 58999,
+        "matchDate": "2026-01-15",
+        "tournamentName": "Worlds 2024",
+        "stage": "Finals",
+        "team1": { "id": 7, "name": "T1", "shortName": "T1" },
+        "team2": { "id": 11, "name": "BLG", "shortName": "BLG" },
+        "winnerTeamId": 7,
+        "gamesCount": 5
+      }
+    ],
+    "page": 1,
+    "pageSize": 20,
+    "total": 123
+  },
+  "traceId": "t_xxx"
+}
+```
+
+---
+
+### 4.3 比赛详情
+
+- **POST** `/api/v1/matches/detail`
+- **鉴权**：需要
+- **描述**：返回比赛详情（对局 games + 每局参赛者 stats）。
+
+**Request**
+```json
+{
+  "matchId": 58999
+}
+```
+
+**Response（示例，字段会随数据表变化）**
+```json
+{
+  "ok": true,
+  "data": {
+    "match": {
+      "id": 58999,
+      "matchDate": "2026-01-15",
+      "tournamentName": "Worlds 2024",
+      "stage": "Finals",
+      "team1Id": 7,
+      "team2Id": 11,
+      "winnerTeamId": 7
+    },
+    "teams": {
+      "team1": { "id": 7, "name": "T1", "shortName": "T1", "region": "LCK" },
+      "team2": { "id": 11, "name": "BLG", "shortName": "BLG", "region": "LPL" }
+    },
+    "games": [
+      {
+        "gameId": 18591,
+        "gameNumber": 1,
+        "duration": 2100,
+        "blueTeamId": 7,
+        "redTeamId": 11,
+        "winnerTeamId": 7,
+        "participants": [
+          {
+            "playerId": 90,
+            "playerName": "Faker",
+            "teamId": 7,
+            "position": "MID",
+            "championName": "九尾妖狐",
+            "championNameEn": "the Nine-Tailed Fox",
+            "stats": {
+              "kills": 5,
+              "deaths": 2,
+              "assists": 8
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "traceId": "t_xxx"
+}
+```
+
+---
+
+### 4.4 选手搜索（分页）
+
+- **POST** `/api/v1/players/search`
+- **鉴权**：需要
+- **描述**：按关键字搜索选手。
+
+**Request**
+```json
+{
+  "q": "Faker",
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+**Response（示例）**
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [{ "id": 90, "name": "Faker" }],
+    "page": 1,
+    "pageSize": 20,
+    "total": 1
+  },
+  "traceId": "t_xxx"
+}
+```
+
+---
+
+## 5. 前端联调建议
+
+1. **Token 与刷新**：建议前端实现统一拦截器：401 时调用 `/auth/refresh` 换新 token 后重试原请求。
+2. **SSE**：`/chat/stream` 为 `POST + text/event-stream`，与浏览器原生 `EventSource(GET)` 不完全一致；建议前端用支持 POST SSE 的库，或用 fetch + ReadableStream 解析。
+3. **会话列表时间格式**：`from/to` 必须 ISO-8601，否则后端直接返回 INVALID_ARGUMENT。
+4. **文件下载**：直接访问 `/chat/files/{fileId}`，服务端透传上游文件流；若上游 404，返回 NOT_FOUND（JSON）。

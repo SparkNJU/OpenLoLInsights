@@ -1,303 +1,243 @@
 # backend说明文档
 
-# **backend目录：**
+> 项目：LoLSmartStatsWeb / backend（Spring Boot + Spring Security + JPA）
+>
+> - 服务端口：`8080`
+> - API 前缀：`/api/v1`
+> - 数据库：MySQL（schema：`lol_smart_stats`）
+
+---
+
+## 1. 目录结构
 
 ```
 backend
-└── src
-    └── main
-        ├── java
-        │   └── com.example.backend
-        │       ├── BackendApplication.java
-        │       │
-        │       ├── config
-        │       │   ├── AppConfig.java
-        │       │   ├── CorsConfig.java
-        │       │   ├── SecurityConfig.java
-        │       │   ├── JwtAuthenticationFilter.java
-        │       │   ├── WebMvcConfig.java
-        │       │   └── WebClientConfig.java
-        │       │
-        │       ├── controller
-        │       │   ├── AuthController.java
-        │       │   ├── UserController.java
-        │       │   ├── ChatController.java
-        │       │   ├── DataController.java
-        │       │   └── MetricsController.java
-        │       │
-        │       ├── service
-        │       │   ├── auth
-        │       │   │   ├── AuthService.java
-        │       │   │   ├── TokenService.java
-        │       │   │   └── UserService.java
-        │       │   │
-        │       │   ├── chat
-        │       │   │   ├── ChatService.java
-        │       │   │   ├── ChatHistoryService.java
-        │       │   │   └── SseRelayService.java
-        │       │   │
-        │       │   ├── data
-        │       │   │   ├── OptionsService.java
-        │       │   │   ├── MatchService.java
-        │       │   │   └── PlayerService.java
-        │       │   │
-        │       │   └── metrics
-        │       │       ├── MetricsService.java
-        │       │       ├── MetricQueryRouter.java
-        │       │       └── strategy
-        │       │           ├── PickBanMetricStrategy.java
-        │       │           ├── TeamWinRateMetricStrategy.java
-        │       │           └── GoldDiff15MetricStrategy.java
-        │       │
-        │       ├── client
-        │       │   └── agent
-        │       │       ├── AgentClient.java
-        │       │       ├── AgentSseHandler.java
-        │       │       └── AgentAuthInterceptor.java
-        │       │
-        │       ├── repository
-        │       │   ├── UserRepository.java
-        │       │   ├── RefreshTokenRepository.java
-        │       │   ├── ChatSessionRepository.java
-        │       │   ├── ChatMessageRepository.java
-        │       │   └── MatchRepository.java
-        │       │
-        │       ├── entity
-        │       │   ├── User.java
-        │       │   ├── RefreshToken.java
-        │       │   ├── ChatSession.java
-        │       │   ├── ChatMessage.java
-        │       │   └── Match.java
-        │       │
-        │       ├── dto
-        │       │   ├── request
-        │       │   │   ├── LoginRequest.java
-        │       │   │   ├── RegisterRequest.java
-        │       │   │   ├── RefreshTokenRequest.java
-        │       │   │   ├── ChatStreamRequest.java
-        │       │   │   ├── MetricsQueryRequest.java
-        │       │   │   └── MatchSearchRequest.java
-        │       │   │
-        │       │   └── response
-        │       │       ├── TokenResponse.java
-        │       │       ├── UserMeResponse.java
-        │       │       ├── ChatHistoryResponse.java
-        │       │       └── MetricsQueryResponse.java
-        │       │
-        │       ├── vo
-        │       │   ├── ApiResponse.java
-        │       │   ├── ApiError.java
-        │       │   └── SseEvent.java
-        │       │
-        │       ├── enums
-        │       │   ├── RoleEnum.java
-        │       │   ├── MetricType.java
-        │       │   └── ChatMode.java
-        │       │
-        │       ├── exception
-        │       │   ├── BizException.java
-        │       │   └── GlobalExceptionHandler.java
-        │       │
-        │       └── util
-        │           ├── JwtUtil.java
-        │           ├── JsonUtil.java
-        │           ├── TraceIdUtil.java
-        │           └── PageUtil.java
-        │
-        └── resources
-            ├── application.properties
-            ├── mysql_dump_batched.sql
-            └── logback-spring.xml   （可选）
+├── pom.xml
+├── api.md                      # 接口对接文档
+├── backend说明文档.md          # 本文档
+├── src
+│   └── main
+│       ├── java
+│       │   └── com.example.backend
+│       │       ├── BackendApplication.java
+│       │       ├── config
+│       │       │   ├── AppConfig.java
+│       │       │   ├── CorsConfig.java
+│       │       │   ├── SecurityConfig.java
+│       │       │   └── TraceIdFilter.java
+│       │       ├── controller
+│       │       │   ├── AuthController.java
+│       │       │   ├── UserController.java
+│       │       │   ├── ChatController.java
+│       │       │   ├── ChatFileController.java
+│       │       │   ├── DataController.java
+│       │       │   ├── MatchController.java
+│       │       │   └── PlayerController.java
+│       │       ├── dto
+│       │       │   ├── request
+│       │       │   └── response
+│       │       ├── entity
+│       │       ├── enums
+│       │       ├── exception
+│       │       ├── repository
+│       │       ├── service
+│       │       │   ├── auth
+│       │       │   ├── chat
+│       │       │   └── data
+│       │       ├── util
+│       │       └── vo
+│       └── resources
+│           ├── application.properties
+│           └── mysql_dump_batched.sql
+└── target
+    └── backend-0.0.1-SNAPSHOT.jar
 ```
 
+---
 
+## 2. 系统模块说明
 
-# 数据库设计说明（MySQL）
+### 2.1 Auth & User（登录/鉴权）
 
-## 1. 数据库概览
+- JWT：AccessToken + RefreshToken
+- 主要接口：
+  - `POST /api/v1/auth/register`
+  - `POST /api/v1/auth/login`
+  - `POST /api/v1/auth/refresh`
+  - `POST /api/v1/auth/logout`
+  - `GET  /api/v1/users/me`
+
+### 2.2 Chat（AI 对话 + 会话/历史落库）
+
+- 主要接口：
+  - `POST /api/v1/chat/sessions`：创建会话
+  - `POST /api/v1/chat/sessions/list`：会话列表
+  - `POST /api/v1/chat/stream`：SSE 流式输出
+  - `POST /api/v1/chat/query`：非流式
+  - `POST /api/v1/chat/history`：历史（POST）
+  - `GET  /api/v1/chat/history`：历史（GET，调试）
+  - `GET  /api/v1/chat/files/{fileId}`：下载报告文件（转发 AI 生成文件）
+
+> 说明：`/chat/stream` 是 **POST + text/event-stream**，前端需要用 fetch/stream 方式解析（而不是原生 EventSource 的 GET）。
+
+### 2.3 Data（筛选项候选值）
+
+- `POST /api/v1/data/options`
+
+### 2.4 Match / Player（比赛与选手查询）
+
+- `POST /api/v1/matches/search`
+- `POST /api/v1/matches/detail`
+- `POST /api/v1/players/search`
+
+---
+
+## 3. 数据库设计说明（MySQL）
+
+### 3.1 数据库概览
 
 - **数据库名**：`lol_smart_stats`
-- **数据库类型**：MySQL
-- **主要用途**：
-  - 英雄联盟职业比赛数据存储
-  - 用户认证与会话管理
-  - 为数据分析（Metrics）和 AI Agent 提供结构化数据支持
+- **表总数**：10
 
-------
+```
+chat_messages
+chat_sessions
+Games
+Matches
+player_game_stats
+PlayerGameStats
+Players
+refresh_tokens
+Teams
+users
+```
 
-## 2. 表结构总览
+### 3.2 表结构总览与用途
 
-| 表名                | 说明                              |
-| ------------------- | --------------------------------- |
-| `users`             | 系统用户表（登录 / 鉴权）         |
-| `refresh_tokens`    | Refresh Token 管理                |
-| `Matches`           | 比赛级别信息（BO 系列）           |
-| `Games`             | 单局比赛（Game 1 / Game 2 …）     |
-| `Teams`             | 战队信息                          |
-| `Players`           | 选手信息                          |
-| `player_game_stats` | 选手单局详细技术统计（完整版）    |
-| `PlayerGameStats`   | 选手单局技术统计（简化/冗余版本） |
+| 表名 | 用途 | 模块 |
+|---|---|---|
+| `users` | 用户信息（登录/鉴权） | Auth/User |
+| `refresh_tokens` | RefreshToken 管理（刷新、登出） | Auth |
+| `chat_sessions` | 对话会话（session） | Chat |
+| `chat_messages` | 对话消息（history） | Chat |
+| `Matches` | 系列赛（BO3/BO5）级别信息 | Data/Match |
+| `Games` | 单局对局（Game1/2/3...） | Match |
+| `Teams` | 战队信息 | Data/Match |
+| `Players` | 选手信息 | Player/Match |
+| `PlayerGameStats` | **选手单局统计（当前实际有数据的主表）** | Match/Data |
+| `player_game_stats` | 与上表结构重复，当前为空 | - |
 
-> ⚠️ 注意：
->  `player_game_stats` 与 `PlayerGameStats` **字段高度重复**，后续建议统一使用其中一个（见文末建议）。
+> ⚠️ 重要现状：
+> - `PlayerGameStats`（首字母大写）表中有数据；
+> - `player_game_stats`（全小写）表当前为空。
+>
+> 因此：后端与接口文档/查询逻辑应以 **`PlayerGameStats`** 作为主数据源。
 
-------
+---
 
-## 3. 用户与鉴权相关表（Auth 模块）
+## 4. 核心数据表字段
 
-### 3.1 `users` —— 用户表
+### 4.1 `Matches`
 
-**用途**：
- 存储平台注册用户信息，用于 JWT 鉴权、Chat、个性化功能。
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int (PK) | 比赛 ID |
+| `match_date` | varchar(255) | 比赛日期（字符串） |
+| `tournament_name` | varchar(255) | 赛事名称 |
+| `stage` | varchar(255) | 阶段 |
+| `team1_id` | int | 战队 1 |
+| `team2_id` | int | 战队 2 |
+| `winner_id` | int | 获胜战队 |
 
-| 字段            | 类型          | 说明                           |
-| --------------- | ------------- | ------------------------------ |
-| `id`            | varchar(64)   | 用户唯一 ID（主键，推荐 UUID） |
-| `email`         | varchar(255)  | 用户邮箱（唯一）               |
-| `password_hash` | varchar(255)  | 密码哈希                       |
-| `nickname`      | varchar(64)   | 昵称                           |
-| `avatar`        | varchar(1024) | 头像 URL                       |
-| `created_at`    | datetime(6)   | 创建时间                       |
+> 备注：`match_date` 为 varchar，若做范围筛选/排序建议统一格式（如 `YYYY-MM-DD` 或 ISO-8601）。
 
-**说明**：
+### 4.2 `Games`
 
-- 不存明文密码
-- `id` 与 refresh_tokens.user_id 关联
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int (PK) | Game ID |
+| `match_id` | int | 所属 Match |
+| `game_number` | int | 第几局 |
+| `duration` | int | 时长（秒） |
+| `blue_team_id` | int | 蓝色方战队 |
+| `red_team_id` | int | 红色方战队 |
+| `winner_id` | int | 胜方战队 |
 
-------
+### 4.3 `Teams`
 
-### 3.2 `refresh_tokens` —— Refresh Token 表
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int (PK) | 战队 ID |
+| `name` | varchar(255) | 战队全名 |
+| `short_name` | varchar(255) | 简称 |
+| `region` | varchar(255) | 赛区 |
 
-**用途**：
- 支持 Access Token 过期后的安全刷新，支持登出 / Token 失效。
+### 4.4 `Players`
 
-| 字段         | 类型         | 说明                  |
-| ------------ | ------------ | --------------------- |
-| `token`      | varchar(128) | Refresh Token（主键） |
-| `user_id`    | varchar(64)  | 所属用户 ID           |
-| `created_at` | datetime(6)  | 创建时间              |
-| `expires_at` | datetime(6)  | 过期时间              |
-| `revoked`    | bit(1)       | 是否已吊销            |
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int (PK) | 选手 ID |
+| `name` | varchar(255) | 选手名 |
 
-**说明**：
+### 4.5 `PlayerGameStats`（当前主数据表）
 
-- 一个用户可有多个 refresh token（多设备登录）
-- 登出时将 `revoked = 1`
+| 字段 | 类型 |
+|---|---|
+| `id` | int (PK) |
+| `game_id` | int |
+| `player_id` | int |
+| `team_id` | int |
+| `position` | varchar(255) |
+| `champion_name` | varchar(255) |
+| `champion_name_en` | varchar(255) |
+| `player_level` | int |
+| `kills` | int |
+| `deaths` | int |
+| `assists` | int |
+| `kda` | double |
+| `kill_participation` | double |
+| `total_damage_dealt` | int |
+| `damage_dealt_to_champions` | int |
+| `damage_dealt_percentage` | double |
+| `total_damage_taken` | int |
+| `damage_taken_percentage` | double |
+| `gold_earned` | int |
+| `minions_killed` | int |
+| `is_mvp` | varchar(255) |
 
-------
+---
 
-## 4. 比赛结构相关表（核心数据模型）
-
-### 4.1 `Matches` —— 比赛（系列赛）表
-
-**用途**：
- 表示一场完整比赛（如 BO3 / BO5），由多个 `Games` 组成。
-
-| 字段              | 类型         | 说明                    |
-| ----------------- | ------------ | ----------------------- |
-| `id`              | int          | 比赛 ID（主键）         |
-| `match_date`      | varchar(255) | 比赛日期                |
-| `tournament_name` | varchar(255) | 赛事名称                |
-| `stage`           | varchar(255) | 阶段（小组赛 / 淘汰赛） |
-| `team1_id`        | int          | 战队 1                  |
-| `team2_id`        | int          | 战队 2                  |
-| `winner_id`       | int          | 获胜战队                |
-
-------
-
-### 4.2 `Games` —— 单局比赛表
-
-**用途**：
- 表示 Match 中的单局（Game 1 / Game 2 …）。
-
-| 字段           | 类型 | 说明            |
-| -------------- | ---- | --------------- |
-| `id`           | int  | Game ID（主键） |
-| `match_id`     | int  | 所属 Match      |
-| `game_number`  | int  | 第几局          |
-| `duration`     | int  | 游戏时长（秒）  |
-| `blue_team_id` | int  | 蓝色方          |
-| `red_team_id`  | int  | 红色方          |
-| `winner_id`    | int  | 胜方战队        |
-
-------
-
-## 5. 战队与选手基础表
-
-### 5.1 `Teams` —— 战队表
-
-| 字段         | 类型         | 说明                       |
-| ------------ | ------------ | -------------------------- |
-| `id`         | int          | 战队 ID                    |
-| `name`       | varchar(255) | 战队全名                   |
-| `short_name` | varchar(255) | 简称                       |
-| `region`     | varchar(255) | 赛区（LPL / LCK / LEC 等） |
-
-------
-
-### 5.2 `Players` —— 选手表
-
-| 字段   | 类型         | 说明     |
-| ------ | ------------ | -------- |
-| `id`   | int          | 选手 ID  |
-| `name` | varchar(255) | 选手名称 |
-
-------
-
-## 6. 选手比赛数据表（Metrics 核心）
-
-### 6.1 `player_game_stats` —— 选手单局详细数据（推荐主表）
-
-**用途**：
- 用于数据分析、Metrics 查询、AI 分析的**核心事实表**。
-
-| 分类 | 字段                                                         |
-| ---- | ------------------------------------------------------------ |
-| 关联 | `game_id`, `player_id`, `team_id`, `position`                |
-| 英雄 | `champion_name`, `champion_name_en`                          |
-| 战斗 | `kills`, `deaths`, `assists`, `kda`                          |
-| 经济 | `gold_earned`, `minions_killed`                              |
-| 输出 | `total_damage_dealt`, `damage_dealt_to_champions`, `damage_dealt_percentage` |
-| 承伤 | `total_damage_taken`, `damage_taken_percentage`              |
-| 参与 | `kill_participation`                                         |
-| 其他 | `player_level`, `is_mvp`                                     |
-
-------
-
-### 6.2 `PlayerGameStats` —— 冗余/历史表（⚠️ 注意）
-
-字段与 `player_game_stats` **几乎完全一致**。
-
-👉 **建议在文档中说明：**
-
-> 当前系统中存在两张结构相同的选手统计表，
->  后端与 Metrics 统一以 `player_game_stats` 作为主数据源，
->  `PlayerGameStats` 后续可合并或废弃。
-
-------
-
-## 7. 表关系总结（用于画 ER 图）
+## 5. 表关系总结（用于 ER 图）
 
 ```
 users 1 --- n refresh_tokens
 
 Matches 1 --- n Games
-Games   1 --- n player_game_stats
+Games   1 --- n PlayerGameStats
 
 Teams   1 --- n Games
-Teams   1 --- n player_game_stats
+Teams   1 --- n PlayerGameStats
 
-Players 1 --- n player_game_stats
+Players 1 --- n PlayerGameStats
+
+chat_sessions 1 --- n chat_messages
+users        1 --- n chat_sessions
 ```
 
-------
+---
 
-## 8. 与后端模块的对应关系
+## 6. 与后端模块 / 接口的对应关系
 
-| 后端模块     | 涉及表                         |
-| ------------ | ------------------------------ |
-| Auth         | users, refresh_tokens          |
-| Data API     | Matches, Games, Teams, Players |
-| Metrics      | player_game_stats              |
-| Chat / Agent | 只读以上数据                   |
+| 模块 | 涉及表 | 相关接口 |
+|---|---|---|
+| Auth | `users`, `refresh_tokens` | `/auth/register` `/auth/login` `/auth/refresh` `/auth/logout` |
+| User | `users` | `/users/me` |
+| Chat | `chat_sessions`, `chat_messages` | `/chat/*`（含 stream/query/history/sessions/files） |
+| Match/Data | `Matches`, `Games`, `Teams`, `Players`, `PlayerGameStats` | `/data/options` `/matches/search` `/matches/detail` `/players/search` |
 
+---
+
+## 7. 备注与建议
+
+1. **双表问题**：`PlayerGameStats` 与 `player_game_stats` 结构重复且后者为空；当前建议统一以 **`PlayerGameStats`** 为主数据源（接口/查询/AI 分析均一致）。
+2. **日期字段类型**：`Matches.match_date` 为 varchar；如果后续需要稳定排序与范围过滤，建议统一数据格式或改为 date/datetime。

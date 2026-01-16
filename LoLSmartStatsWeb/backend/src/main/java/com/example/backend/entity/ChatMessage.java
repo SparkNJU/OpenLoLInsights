@@ -7,6 +7,8 @@ import java.time.Instant;
 @Entity
 @Table(name = "chat_messages", indexes = {
         @Index(name = "idx_chat_messages_session_created", columnList = "sessionId, createdAt"),
+        @Index(name = "idx_chat_messages_user_created", columnList = "userId, createdAt"),
+        @Index(name = "idx_chat_messages_user_session", columnList = "userId, sessionId"),
         @Index(name = "idx_chat_messages_turn", columnList = "turnId")
 })
 public class ChatMessage {
@@ -14,6 +16,9 @@ public class ChatMessage {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(nullable = false, length = 64)
+    private String userId;
 
     @Column(nullable = false, length = 64)
     private String sessionId;
@@ -29,6 +34,13 @@ public class ChatMessage {
 
     @Column(nullable = false, length = 16)
     private String role; // user / assistant
+
+    /**
+     * 对话状态快照（冗余存储，便于按消息表直接过滤）；实际“会话状态”以 ChatSession.status 为准。
+     * active / archived / deleted
+     */
+    @Column(nullable = false, length = 16)
+    private String status;
 
     @Lob
     @Column(nullable = false, columnDefinition = "LONGTEXT")
@@ -52,9 +64,14 @@ public class ChatMessage {
     @PrePersist
     public void prePersist() {
         if (createdAt == null) createdAt = Instant.now();
+        if (status == null || status.isBlank()) status = "active";
     }
 
     public Long getId() { return id; }
+
+    public String getUserId() { return userId; }
+    public void setUserId(String userId) { this.userId = userId; }
+
     public String getSessionId() { return sessionId; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
     public String getTurnId() { return turnId; }
@@ -65,6 +82,10 @@ public class ChatMessage {
     public void setMode(String mode) { this.mode = mode; }
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
     public String getReportFileId() { return reportFileId; }
@@ -78,4 +99,3 @@ public class ChatMessage {
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
 }
-

@@ -17,4 +17,3 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
 
     Optional<ChatMessage> findFirstByReportFileId(String reportFileId);
 }
-

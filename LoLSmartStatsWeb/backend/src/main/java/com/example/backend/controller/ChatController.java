@@ -1,7 +1,10 @@
 package com.example.backend.controller;
 
 import com.example.backend.dto.request.ChatHistoryRequest;
+import com.example.backend.dto.request.ChatSessionCreateRequest;
+import com.example.backend.dto.request.ChatSessionListRequest;
 import com.example.backend.dto.request.ChatStreamRequest;
+import com.example.backend.exception.BizException;
 import com.example.backend.service.chat.ChatHistoryService;
 import com.example.backend.service.chat.ChatService;
 import com.example.backend.util.TraceIdUtil;
@@ -13,6 +16,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
+import java.time.Instant;
 import java.util.Map;
 
 @RestController
@@ -32,41 +36,88 @@ public class ChatController {
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> stream(@Valid @RequestBody ChatStreamRequest req, Authentication authentication) {
-        String accessToken = "";
-        // 这里无法直接拿到原始 jwt；采用安全上下文主体 userId 仍可调用 AI，但按你的 AI 文档需要 Bearer JWT。
-        // 若必须透传原 jwt，请后续在过滤器里把 token 放到 request attribute，然后这里读出来。
-        // 先兼容：读取请求头的 Authorization（常见做法）
-        // 注意：Spring Security 已验证 token 但不会默认暴露原串
-        return chatService.streamToAgent(extractBearerToken(), req.getSessionId(), req.getMessage(), req.getMode(), req.getContext());
+        String userId = currentUserId(authentication);
+        return chatService.streamToAgent(extractBearerToken(), userId, req.getSessionId(), req.getMessage(), req.getMode(), req.getContext());
     }
 
     /**
      * 2.3 非流式问答
      */
     @PostMapping("/query")
-    public ApiResponse<Map<String, Object>> query(@Valid @RequestBody ChatStreamRequest req) {
-        Map<String, Object> data = chatService.queryToAgent(extractBearerToken(), req.getSessionId(), req.getMessage(), req.getMode(), req.getContext());
+    public ApiResponse<Map<String, Object>> query(@Valid @RequestBody ChatStreamRequest req, Authentication authentication) {
+        String userId = currentUserId(authentication);
+        Map<String, Object> data = chatService.queryToAgent(extractBearerToken(), userId, req.getSessionId(), req.getMessage(), req.getMode(), req.getContext());
         return ApiResponse.ok(data, TraceIdUtil.getOrCreate());
     }
 
     /**
-     * 2.1 创建会话（可选）：当前实现仅返回一个新 sessionId，不落库。
-     * 后续如需持久化历史，可在 ChatHistoryService 中落库。
+     * 2.1 创建会话：落库并绑定当前用户。
      */
     @PostMapping("/sessions")
-    public ApiResponse<Map<String, Object>> createSession(@RequestBody(required = false) Map<String, Object> body) {
-        String title = body == null ? null : (String) body.get("title");
-        Map<String, Object> data = chatHistoryService.createSession(title);
+    public ApiResponse<Map<String, Object>> createSession(@RequestBody(required = false) ChatSessionCreateRequest body,
+                                                          Authentication authentication) {
+        String userId = currentUserId(authentication);
+        String title = body == null ? null : body.getTitle();
+        Map<String, Object> data = chatHistoryService.createSession(userId, title);
+        return ApiResponse.ok(data, TraceIdUtil.getOrCreate());
+    }
+
+    /**
+     * 会话列表查询：分页 + 过滤（status、from/to），按 updatedAt 倒序。
+     */
+    @PostMapping("/sessions/list")
+    public ApiResponse<Map<String, Object>> listSessions(@Valid @RequestBody(required = false) ChatSessionListRequest req,
+                                                         Authentication authentication) {
+        if (req == null) {
+            throw new BizException("INVALID_ARGUMENT", "缺少请求体，请传 page/pageSize，可选 status/from/to");
+        }
+        String userId = currentUserId(authentication);
+
+        Instant from = null;
+        Instant to = null;
+        try {
+            if (req.getFrom() != null && !req.getFrom().isBlank()) from = Instant.parse(req.getFrom());
+            if (req.getTo() != null && !req.getTo().isBlank()) to = Instant.parse(req.getTo());
+        } catch (Exception e) {
+            throw new BizException("INVALID_ARGUMENT", "from/to 必须是 ISO-8601 时间（如 2026-01-15T00:00:00Z）");
+        }
+
+        Map<String, Object> data = chatHistoryService.listSessions(userId, req.getStatus(), from, to, req.getPage(), req.getPageSize());
         return ApiResponse.ok(data, TraceIdUtil.getOrCreate());
     }
 
     /**
      * 2.4 历史消息：后端本地实现
      */
-    @PostMapping("/history")
-    public ApiResponse<Map<String, Object>> history(@Valid @RequestBody ChatHistoryRequest req) {
-        Map<String, Object> data = chatHistoryService.history(req.getSessionId(), req.getPage(), req.getPageSize());
+    @PostMapping(value = "/history", consumes = {MediaType.APPLICATION_JSON_VALUE, MediaType.APPLICATION_OCTET_STREAM_VALUE})
+    public ApiResponse<Map<String, Object>> history(@Valid @RequestBody(required = false) ChatHistoryRequest req,
+                                                    Authentication authentication) {
+        if (req == null) {
+            throw new BizException("INVALID_ARGUMENT", "缺少请求体，请传 sessionId/page/pageSize");
+        }
+        String userId = currentUserId(authentication);
+        Map<String, Object> data = chatHistoryService.history(userId, req.getSessionId(), req.getPage(), req.getPageSize());
         return ApiResponse.ok(data, TraceIdUtil.getOrCreate());
+    }
+
+    /**
+     * 便于调试：GET 方式查历史（避免 Content-Type 误配）
+     */
+    @GetMapping("/history")
+    public ApiResponse<Map<String, Object>> historyGet(@RequestParam String sessionId,
+                                                       @RequestParam(defaultValue = "1") int page,
+                                                       @RequestParam(defaultValue = "20") int pageSize,
+                                                       Authentication authentication) {
+        String userId = currentUserId(authentication);
+        Map<String, Object> data = chatHistoryService.history(userId, sessionId, page, pageSize);
+        return ApiResponse.ok(data, TraceIdUtil.getOrCreate());
+    }
+
+    private static String currentUserId(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null || authentication.getName().isBlank()) {
+            throw new BizException("UNAUTHORIZED", "未登录");
+        }
+        return authentication.getName();
     }
 
     // 从当前 HTTP 请求里拿 Authorization: Bearer xxx
