@@ -15,106 +15,75 @@ const loading = ref(false)
 const matchData = ref<MatchDetail | null>(null)
 const activeGameTab = ref<number>(1)
 
-// --- 3. 模拟数据 ---
+// --- 3. 数据加载 ---
 const fetchMatchDetail = async () => {
   loading.value = true
   try {
-      // --- [TODO: 对接后端时取消注释] ---
-      /*
-      // 注意：这里强烈依赖后端在 /matches/detail 的 games 数组中返回 stats 字段
-      const res: any = await dataApi.getMatchDetail(matchId)
-      
-      // 数据映射 (Backend camelCase -> Frontend Interface)
-      matchData.value = {
-          id: res.matchId,
-          date: res.date,
-          tournamentName: res.tournamentId,
-          stage: 'TBD', // 接口文档里好像没写 stage，可能需要补充
-          team1: { id: res.teams[0].teamId, name: '...', shortName: '...' }, // 需确认后端是否返回完整 Team 对象
-          team2: { id: res.teams[1].teamId, name: '...', shortName: '...' },
-          winnerId: 0, // 文档没直接返回大场 winnerId，可能需要前端算
-          games: res.games.map((g: any) => ({
-              id: g.gameNo, // 或 g.gameId
-              matchId: res.matchId,
-              gameNumber: g.gameNo,
-              duration: g.durationSec,
-              blueTeamId: 0, // 文档里没明确写 games 下的红蓝方 ID，需确认
-              redTeamId: 0,
-              winnerId: g.winnerTeamId,
-              stats: g.stats // [关键] 依赖后端返回这个数组
-          }))
+      const numericId = typeof matchId === 'string' ? parseInt(matchId as string, 10) : (matchId as number)
+      const res: any = await dataApi.getMatchDetail(numericId)
+      if (!res) {
+        matchData.value = null
+        return
       }
-      */
 
-      // --- [Mock Logic] ---
-      setTimeout(() => {
+      const match = res.match || {}
+      const teams = res.teams || {}
+      const games = Array.isArray(res.games) ? res.games : []
+
       matchData.value = {
-        id: 1001,
-        date: '2024-07-20',
-        tournamentName: '14/lpl',
-        stage: '季后',
-        winnerId: 101,
-        team1: { id: 101, name: 'Bilibili Gaming', shortName: 'BLG' },
-        team2: { id: 102, name: 'Top Esports', shortName: 'TES' },
-        games: [
-          {
-            id: 5001, matchId: 1001, gameNumber: 1, duration: 1856,
-            blueTeamId: 101, redTeamId: 102, winnerId: 101,
-            stats: generateMockStats(5001, 101, 102, 101)
-          },
-          {
-            id: 5002, matchId: 1001, gameNumber: 2, duration: 2140,
-            blueTeamId: 102, redTeamId: 101, winnerId: 102,
-            stats: generateMockStats(5002, 102, 101, 102)
-          },
-          {
-            id: 5003, matchId: 1001, gameNumber: 3, duration: 1980,
-            blueTeamId: 101, redTeamId: 102, winnerId: 101,
-            stats: generateMockStats(5003, 101, 102, 101)
-          }
-        ]
-      }
-      loading.value = false
-    }, 500)
+        id: match.id,
+        date: match.matchDate,
+        tournamentName: match.tournamentName,
+        stage: match.stage,
+        winnerId: match.winnerTeamId,
+        team1: teams.team1 as Team,
+        team2: teams.team2 as Team,
+        games: games.map((g: any) => {
+          const participants = Array.isArray(g.participants) ? g.participants : []
+          const stats: PlayerGameStat[] = participants.map((p: any, idx: number) => {
+            const st = p.stats || {}
+            return {
+              id: p.playerId ?? idx,
+              gameId: g.gameId,
+              playerId: p.playerId,
+              teamId: p.teamId,
+              playerName: p.playerName || '',
+              position: p.position || '',
+              championName: p.championName || '',
+              championNameEn: p.championNameEn || '',
+              playerLevel: st.playerLevel ?? 0,
+              kills: st.kills ?? 0,
+              deaths: st.deaths ?? 0,
+              assists: st.assists ?? 0,
+              kda: st.kda ?? 0,
+              killParticipation: st.killParticipation ?? 0,
+              totalDamageDealt: st.totalDamageDealt ?? 0,
+              damageDealtPercentage: st.damageDealtPercentage ?? 0,
+              totalDamageTaken: st.totalDamageTaken ?? 0,
+              damageTakenPercentage: st.damageTakenPercentage ?? 0,
+              goldEarned: st.goldEarned ?? 0,
+              minionsKilled: st.minionsKilled ?? 0,
+              isMvp: !!st.isMvp
+            }
+          })
 
+          return {
+            id: g.gameId,
+            matchId: match.id,
+            gameNumber: g.gameNumber,
+            duration: g.duration,
+            blueTeamId: g.blueTeamId,
+            redTeamId: g.redTeamId,
+            winnerId: g.winnerTeamId,
+            stats
+          } as Game
+        })
+      }
   } catch (e) {
       console.error(e)
   } finally {
       loading.value = false // 移动到 finally 确保执行
   }
-
-
-}
-
-const generateMockStats = (gameId: number, blueId: number, redId: number, winnerId: number): PlayerGameStat[] => {
-  const positions = ['TOP', 'JUNGLE', 'MID', 'ADC', 'SUPPORT']
-  const stats: PlayerGameStat[] = []
-  
-  // Blue Team
-  positions.forEach((pos, i) => {
-    stats.push({
-      id: gameId * 10 + i, gameId: gameId, playerId: i, teamId: blueId,
-      playerName: `BluePlayer_${pos}`, position: pos,
-      championName: ['剑魔', '猪妹', '阿狸', '卡莎', '牛头'][i], championNameEn: 'Mock',
-      playerLevel: 16, kills: Math.floor(Math.random() * 10), deaths: Math.floor(Math.random() * 5), assists: Math.floor(Math.random() * 15),
-      kda: 4.5, killParticipation: 0.65, totalDamageDealt: 20000 + Math.random() * 10000, damageDealtPercentage: 0.2,
-      totalDamageTaken: 15000, damageTakenPercentage: 0.2, goldEarned: 12000 + Math.random() * 3000, minionsKilled: 200,
-      isMvp: winnerId === blueId && pos === 'MID'
-    })
-  })
-  // Red Team
-  positions.forEach((pos, i) => {
-    stats.push({
-      id: gameId * 20 + i, gameId: gameId, playerId: i + 5, teamId: redId,
-      playerName: `RedPlayer_${pos}`, position: pos,
-      championName: ['鳄鱼', '破败王', '沙皇', 'EZ', '布隆'][i], championNameEn: 'Mock',
-      playerLevel: 15, kills: Math.floor(Math.random() * 8), deaths: Math.floor(Math.random() * 8), assists: Math.floor(Math.random() * 10),
-      kda: 2.1, killParticipation: 0.5, totalDamageDealt: 18000 + Math.random() * 8000, damageDealtPercentage: 0.2,
-      totalDamageTaken: 18000, damageTakenPercentage: 0.2, goldEarned: 10000 + Math.random() * 2000, minionsKilled: 180,
-      isMvp: false
-    })
-  })
-  return stats
 }
 
 // --- 4. 聚合计算逻辑 ---

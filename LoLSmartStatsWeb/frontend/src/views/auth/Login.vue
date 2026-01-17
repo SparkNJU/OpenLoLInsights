@@ -2,7 +2,6 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import request from '../../utils/request'
 import { User, Lock } from '@element-plus/icons-vue'
 import { authApi } from '@/api/auth'
 
@@ -13,18 +12,6 @@ const form = reactive({
   email: '',
   password: ''
 })
-const handleLoginTemp = async () => {
-  // 临时测试账号
-  if (form.email == 'test' && form.password == 'test') {
-    // 伪造 token 以通过路由守卫
-    localStorage.setItem('accessToken', 'temp-mock-token');
-    ElMessage.success('登录成功')//提示
-    router.push('/')
-    return
-  }
-  ElMessage.error('账号或密码错误')
-}
-// 后端实现后使用下面这个函数
 const handleLogin = async () => {
   if (!form.email || !form.password) {
     ElMessage.warning('请输入邮箱和密码')
@@ -81,22 +68,17 @@ const handleGuestAccess = () => {
         <h2 class="text-3xl font-bold text-gray-800 mb-2">欢迎回来</h2>
         <p class="text-gray-500 mb-8">请登录您的账户以继续</p>
 
-        <el-form :model="form" @keyup.enter="handleLoginTemp" size="large">
-          <!-- 后端实现之后修改成handleLogin -->
-          <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <p class="text-sm text-blue-600">测试账号：test / test</p>
-          </div>
+        <el-form :model="form" @keyup.enter="handleLogin" size="large">
           <el-form-item>
-            <el-input v-model="form.email" placeholder="请输入测试账号: test" :prefix-icon="User" />
+            <el-input v-model="form.email" placeholder="邮箱地址" :prefix-icon="User" />
           </el-form-item>
 
           <el-form-item>
-            <el-input v-model="form.password" type="password" placeholder="请输入测试密码: test" :prefix-icon="Lock"
-              show-password />
+            <el-input v-model="form.password" type="password" placeholder="密码" :prefix-icon="Lock" show-password />
           </el-form-item>
 
           <el-button type="primary" class="w-full !rounded-lg !h-12 !text-lg !font-medium mt-4" :loading="loading"
-            @click="handleLoginTemp">
+            @click="handleLogin">
             登 录
           </el-button>
 

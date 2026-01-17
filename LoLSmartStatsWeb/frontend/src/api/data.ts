@@ -10,10 +10,10 @@ export const dataApi = {
   // 3.2 比赛列表搜索
   searchMatches(filter: any, page: number = 1, pageSize: number = 20) {
     return request.post('/matches/search', {
-      filter,
       page,
       pageSize,
-      sort: [{ field: 'date', direction: 'desc' }]
+      filter,
+      sort: { field: 'matchDate', order: 'desc' }
     })
   },
 
@@ -24,9 +24,9 @@ export const dataApi = {
   },
 
   // 3.4 选手搜索
-  searchPlayers(filter: any, page: number = 1, pageSize: number = 20) {
+  searchPlayers(q: string, page: number = 1, pageSize: number = 20) {
     return request.post('/players/search', {
-      filter,
+      q,
       page,
       pageSize
     })

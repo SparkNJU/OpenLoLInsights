@@ -7,8 +7,8 @@ import {
   Edit, Delete, Search, Message as MessageIcon , Clock
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import request from '../../utils/request'
 import { chatApi } from '@/api/chat'
+import { dataApi } from '@/api/data'
 
 // --- 类型定义 ---
 interface Message {
@@ -58,14 +58,14 @@ const isSendDisabled = computed(() => {
 
 // 4. 上下文筛选
 const context = reactive({
-  tournamentId: '2024-worlds',
+  tournamentId: '',
   dateRange: [] as string[],
   teamIds: [] as string[],
   patch: ''
 })
 const options = reactive({
-  tournaments: [{ label: 'Worlds 2024', value: '2024-worlds' }],
-  teams: [{ label: 'T1', value: 'T1' }, { label: 'BLG', value: 'BLG' }],
+  tournaments: [] as { label: string; value: string }[],
+  teams: [] as { label: string; value: string }[],
   patches: ['14.18', '14.19']
 })
 
@@ -85,8 +85,23 @@ const closeSidebar = () => {
 
 // --- 逻辑方法：会话管理 (CRUD) ---
 
-// 加载本地会话列表
-const loadSessions = () => {
+// 加载会话列表（优先从后端获取，失败时回退本地）
+const loadSessions = async () => {
+  if (isLoggedIn.value) {
+    try {
+      const res: any = await chatApi.listSessions({ page: 1, pageSize: 50, status: 'active' })
+      const items = Array.isArray(res?.items) ? res.items : []
+      sessions.value = items.map((it: any) => ({
+        id: it.sessionId,
+        name: it.title || '新对话'
+      }))
+      localStorage.setItem('chat_sessions', JSON.stringify(sessions.value))
+      return
+    } catch (e) {
+      console.error('加载会话列表失败，使用本地缓存', e)
+    }
+  }
+
   const saved = localStorage.getItem('chat_sessions')
   if (saved) {
     try {
@@ -94,10 +109,6 @@ const loadSessions = () => {
     } catch (e) {
       sessions.value = []
     }
-  }
-  // 如果没有会话且已登录，创建一个默认的
-  if (sessions.value.length === 0 && isLoggedIn.value) {
-    // 可以在这里静默创建，或者等用户发第一条消息时创建
   }
 }
 
@@ -202,40 +213,32 @@ const fetchHistory = async () => {
 
   messages.value = [{ role: 'assistant', content: '正在加载历史记录...' }]
   try {
-    // --- [TODO: 对接后端时取消注释] ---
-    /*
     const res: any = await chatApi.getHistory(currentSessionId.value, 1, 50)
-    if (res && res.items) {
-       messages.value = res.items.reverse().map((item: any) => ({
-        role: item.role,
-        content: item.content,
-        ts: item.ts,
-        dataRefs: item.dataRefs
-      }))
-      scrollToBottom()
-    }
-    */
-    const res: any = await request.post('/chat/history', {
-      sessionId: currentSessionId.value,
-      page: 1,
-      pageSize: 50
-    })
-    
-    if (res && res.items && Array.isArray(res.items)) {
-      if(res.items.length > 0) {
-         const history = res.items.reverse().map((item: any) => ({
+    const items = Array.isArray(res?.items) ? res.items : []
+    if (items.length > 0) {
+      messages.value = items
+        .slice()
+        .reverse()
+        .map((item: any) => ({
           role: item.role,
           content: item.content,
-          ts: item.ts,
-          dataRefs: item.dataRefs
+          ts: item.createdAt,
+          dataRefs: item.reportFileId
+            ? [
+                {
+                  type: 'report',
+                  fileId: item.reportFileId,
+                  downloadUrl: `/api/v1/chat/files/${item.reportFileId}${
+                    currentSessionId.value ? `?sessionId=${currentSessionId.value}` : ''
+                  }`
+                }
+              ]
+            : []
         }))
-        messages.value = history
-      } else {
-        // 新会话
-        messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
-      }
-      scrollToBottom()
+    } else {
+      messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
     }
+    scrollToBottom()
   } catch (err) {
     console.error(err)
     messages.value = [{ role: 'assistant', content: '加载历史记录失败。' }]
@@ -243,7 +246,7 @@ const fetchHistory = async () => {
 }
 
 // 创建新会话
-const handleNewSession = () => {
+const handleNewSession = async () => {
   if (!isLoggedIn.value) {
     messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
     currentSessionId.value = null
@@ -251,24 +254,18 @@ const handleNewSession = () => {
     return
   }
 
-  // --- [TODO: 官方推荐流程 - 先调接口创建会话] ---
-  /*
   try {
-      const res: any = await chatApi.createSession()
-      const newId = res.sessionId
-      // 更新本地列表
-      sessions.value.unshift({ id: newId, name: res.title || '新对话' })
+    const res: any = await chatApi.createSession()
+    const newId = res?.sessionId
+    const newSessionName = res?.title || `新的对话 ${sessions.value.length + 1}`
+    if (newId) {
+      sessions.value.unshift({ id: newId, name: newSessionName })
       saveSessions()
       router.push({ query: { sessionId: newId } })
-  } catch(e) { ... }
-  */
-
-  const newId = Date.now().toString()
-  const newSessionName = `新的对话 ${sessions.value.length + 1}`
-  sessions.value.unshift({ id: newId, name: newSessionName }) // 加到最前
-  saveSessions()
-  
-  router.push({ query: { sessionId: newId } })
+    }
+  } catch (e) {
+    ElMessage.error('创建会话失败')
+  }
 }
 
 // 发送消息
@@ -360,6 +357,29 @@ const handleSend = async () => {
   }
 }
 
+const loadContextOptions = async () => {
+  try {
+    const res: any = await dataApi.getOptions({}, ['tournaments', 'teams'])
+    const tournaments = Array.isArray(res?.tournaments) ? res.tournaments : []
+    const teams = Array.isArray(res?.teams) ? res.teams : []
+
+    options.tournaments = tournaments.map((t: any) => ({
+      label: t,
+      value: t
+    }))
+    options.teams = teams.map((t: any) => ({
+      label: t.shortName || t.name,
+      value: String(t.id)
+    }))
+
+    if (!context.tournamentId && options.tournaments.length > 0) {
+      context.tournamentId = options.tournaments[0].value
+    }
+  } catch (e) {
+    console.error('加载上下文筛选项失败', e)
+  }
+}
+
 // --- 生命周期与监听 ---
 
 watch(() => route.query.sessionId, (newId) => {
@@ -379,8 +399,8 @@ onMounted(() => {
     const count = localStorage.getItem('guest_chat_count')
     guestCount.value = count ? parseInt(count) : 0
   }
-  
   loadSessions()
+  loadContextOptions()
   document.addEventListener('pointerdown', handleDocumentClick, true)
 })
 
@@ -452,11 +472,21 @@ onUnmounted(() => {
                 </div>
               </div>
               <div v-if="msg.dataRefs && msg.dataRefs.length" class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div v-for="(data, dIdx) in msg.dataRefs" :key="dIdx" class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
+                <div
+                  v-for="(data, dIdx) in msg.dataRefs"
+                  :key="dIdx"
+                  class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                  @click="data.type === 'report' && data.downloadUrl ? window.open(data.downloadUrl, '_blank') : null"
+                >
                   <div class="text-xs font-bold text-gray-600 mb-2 flex items-center">
-                    <el-icon class="mr-1 text-blue-500"><PieChart /></el-icon> {{ data.title || '数据图表' }}
+                    <el-icon class="mr-1 text-blue-500"><PieChart /></el-icon>
+                    {{ data.title || (data.type === 'report' ? '分析报告' : '数据图表') }}
                   </div>
-                  <div class="h-24 bg-gray-50 rounded flex items-center justify-center text-gray-400 text-xs border border-dashed border-gray-200">图表预览</div>
+                  <div
+                    class="h-24 bg-gray-50 rounded flex items-center justify-center text-gray-400 text-xs border border-dashed border-gray-200"
+                  >
+                    {{ data.type === 'report' ? '点击下载报告文件' : '图表预览' }}
+                  </div>
                 </div>
               </div>
             </div>

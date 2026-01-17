@@ -98,76 +98,84 @@ const initFromUrl = () => {
 const fetchMatches = async (tournamentType?: string) => {
   loading.value = true
   try {
-    const type = tournamentType || 'lpl'
-    const filterStr = `${selectedYear.value}/${type}`
-    console.log(`Fetching matches for: ${filterStr}`)
-    
-    // --- [TODO: 对接后端时取消注释] ---
-    /*
-    const res: any = await dataApi.searchMatches(filter, 1, 20)
-    // 后端返回结构: { items: [], total: ... }
-    // 需要适配一下字段名（如果后端返回 camelCase）
-    matches.value = res.items.map((m: any) => ({
-        id: m.matchId,
-        date: m.date,
-        tournamentName: m.tournamentId, // 或 m.tournamentName
-        stage: m.stage || '常规赛',
-        team1Id: m.blueTeamId, 
-        team1Name: 'TBD', // 如果列表接口没返回名字，可能需要额外处理或要求后端加上
-        scoreTeam1: parseInt(m.score.split('-')[0]),
-        team2Id: m.redTeamId,
-        team2Name: 'TBD',
-        scoreTeam2: parseInt(m.score.split('-')[1]),
-        winnerId: m.winnerTeamId
-    }))
-    */
-
-    const mockData: MatchListItem[] = []
-    
-    // 特定 Mock 数据: BLG 2:0 TES (ID: 1001)
-    mockData.push({
-        id: 1001,
-        date: `20${selectedYear.value}-08-10`,
-        tournamentName: filterStr,
-        stage: '小组赛',
-        team1Id: 101, team1Name: 'BLG', scoreTeam1: 2,
-        team2Id: 102, team2Name: 'TES', scoreTeam2: 0,
-        winnerId: 101
-    })
-
-    // 随机填充
-    const count = Math.floor(Math.random() * 4) + 2
-    for(let i=0; i<count; i++) {
-        mockData.push({
-            id: 2000 + i,
-            date: `20${selectedYear.value}-0${Math.floor(Math.random()*8)+1}-1${i}`,
-            tournamentName: filterStr,
-            stage: '常规赛',
-            team1Id: 103, team1Name: 'JDG', scoreTeam1: 1,
-            team2Id: 104, team2Name: 'LNG', scoreTeam2: 2,
-            winnerId: 104
-        })
+    const year = `20${selectedYear.value}`
+    const tournament = activeTournament.value
+    const filter: any = {
+      tournamentName: tournament?.name,
+      dateRange: {
+        from: `${year}-01-01`,
+        to: `${year}-12-31`
+      }
     }
-    setTimeout(() => { matches.value = mockData; loading.value = false }, 300)
-  } catch (error) { loading.value = false }
+    const res: any = await dataApi.searchMatches(filter, 1, 20)
+    const items = Array.isArray(res?.items) ? res.items : []
+    matches.value = items.map((m: any) => {
+      const gamesCount = m.gamesCount || 0
+      const winnerTeamId = m.winnerTeamId
+      let scoreTeam1 = 0
+      let scoreTeam2 = 0
+      if (gamesCount > 0 && winnerTeamId && m.team1 && m.team2) {
+        const winnerScore = Math.floor(gamesCount / 2) + 1
+        const loserScore = gamesCount - winnerScore
+        if (winnerTeamId === m.team1.id) {
+          scoreTeam1 = winnerScore
+          scoreTeam2 = loserScore
+        } else {
+          scoreTeam1 = loserScore
+          scoreTeam2 = winnerScore
+        }
+      }
+      return {
+        id: m.matchId,
+        date: m.matchDate,
+        tournamentName: m.tournamentName,
+        stage: m.stage,
+        team1Id: m.team1?.id,
+        team2Id: m.team2?.id,
+        winnerId: m.winnerTeamId,
+        team1Name: m.team1?.shortName || m.team1?.name,
+        team2Name: m.team2?.shortName || m.team2?.name,
+        scoreTeam1,
+        scoreTeam2
+      } as MatchListItem
+    })
+  } catch (error) {
+    matches.value = []
+  } finally {
+    loading.value = false
+  }
 }
 
-const fetchTeams = async () => { teams.value = [{ id:1, name:'BLG', shortName:'BLG'},{ id:2, name:'TES', shortName:'TES'}]}
-const handlePlayerSearch = async () => { 
+const fetchTeams = async () => {
+  const year = `20${selectedYear.value}`
+  const scope = {
+    dateRange: {
+      from: `${year}-01-01`,
+      to: `${year}-12-31`
+    }
+  }
+  const res: any = await dataApi.getOptions(scope, ['teams'])
+  const list = Array.isArray(res?.teams) ? res.teams : []
+  teams.value = list.map((t: any) => ({
+    id: t.id,
+    name: t.name,
+    shortName: t.shortName
+  }))
+}
+
+const handlePlayerSearch = async () => {
   playerLoading.value = true
   try {
-    // --- [TODO: 对接后端时取消注释] ---
-    /*
-    const res: any = await dataApi.searchPlayers({ keyword: playerSearchKeyword.value })
-    players.value = res.items.map((p: any) => ({
-        id: p.playerId || p.id,
-        name: p.name || p.playerId // 视后端返回字段而定
+    if (!playerSearchKeyword.value.trim()) {
+      players.value = []
+      return
+    }
+    const res: any = await dataApi.searchPlayers(playerSearchKeyword.value.trim(), 1, 50)
+    const items = Array.isArray(res?.items) ? res.items : []
+    players.value = items.map((p: any) => ({
+      id: p.id,
+      name: p.name
     }))
-    */
-
-    // --- [Mock Data] ---
-    // ... (保留之前的 mock 代码) ..
-    players.value = [{ id:1, name:'Faker'}]
   } finally {
     playerLoading.value = false
   }

@@ -2,8 +2,8 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import request from '../../utils/request'
 import { User, Lock, Message } from '@element-plus/icons-vue'
+import { authApi } from '@/api/auth'
 
 const router = useRouter()
 const loading = ref(false)
@@ -27,14 +27,13 @@ const handleRegister = async () => {
   
   loading.value = true
   try {
-    // API: POST /api/v1/auth/register
-    const res: any = await request.post('/auth/register', {
+    const res: any = await authApi.register({
       email: form.email,
       password: form.password,
       nickname: form.nickname
     })
-    
-    if (res.tokens) {
+
+    if (res && res.tokens && res.user) {
       localStorage.setItem('accessToken', res.tokens.accessToken)
       localStorage.setItem('refreshToken', res.tokens.refreshToken)
       localStorage.setItem('user', JSON.stringify(res.user))

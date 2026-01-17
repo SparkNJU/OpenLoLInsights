@@ -24,12 +24,19 @@ service.interceptors.request.use(
 
 // Response响应拦截器
 service.interceptors.response.use(
-  //返回状态码为2xx执行第一个回调函数 ，否则执行第二个回调函数
   (response) => {
-    return response.data;
+    const res = response.data;
+    if (res && typeof res === 'object' && 'ok' in res && ('data' in res || 'error' in res)) {
+      if (res.ok) {
+        return res.data;
+      }
+      const msg = res.error?.message || '请求失败';
+      ElMessage.error(msg);
+      return Promise.reject(new Error(msg));
+    }
+    return res;
   },
   (error) => {
-    // 处理错误
     const status = error.response?.status;
     const msg = error.response?.data?.error?.message || error.message || '请求失败';
 
