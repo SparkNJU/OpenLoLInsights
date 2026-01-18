@@ -13,7 +13,7 @@ const loading = ref(false)
 
 // --- 2. 状态管理 ---
 const matchData = ref<MatchDetail | null>(null)
-const activeGameTab = ref<number>(1)
+const activeGameTab = ref<string>('1')
 
 // --- 3. 数据加载 ---
 const fetchMatchDetail = async () => {
@@ -79,6 +79,10 @@ const fetchMatchDetail = async () => {
           } as Game
         })
       }
+
+      if (matchData.value.games.length > 0) {
+        activeGameTab.value = String(matchData.value.games[0].gameNumber || 1)
+      }
   } catch (e) {
       console.error(e)
   } finally {
@@ -98,25 +102,25 @@ const seriesScore = computed(() => {
 })
 
 const currentGame = computed(() => {
-  return matchData.value?.games.find(g => g.gameNumber === activeGameTab.value)
+  if (!matchData.value) return undefined
+  const active = Number(activeGameTab.value)
+  return matchData.value.games.find(g => g.gameNumber === active)
 })
 
 const currentGameTeamStats = computed(() => {
   if (!currentGame.value || !matchData.value) return null
-  
+
   const calc = (teamId: number) => {
     const teamStats = currentGame.value!.stats.filter(s => s.teamId === teamId)
     return {
       totalKills: teamStats.reduce((sum, p) => sum + p.kills, 0),
-      totalGold: teamStats.reduce((sum, p) => sum + p.goldEarned, 0),
-      totalDamage: teamStats.reduce((sum, p) => sum + p.totalDamageDealt, 0),
       players: teamStats
     }
   }
 
   const blueId = currentGame.value.blueTeamId
   const redId = currentGame.value.redTeamId
-  
+
   const blueTeamInfo = matchData.value.team1.id === blueId ? matchData.value.team1 : matchData.value.team2
   const redTeamInfo = matchData.value.team1.id === redId ? matchData.value.team1 : matchData.value.team2
 
@@ -131,9 +135,6 @@ const formatDuration = (seconds: number) => {
   const s = seconds % 60
   return `${m}:${s.toString().padStart(2, '0')}`
 }
-
-const formatGold = (num: number) => (num / 1000).toFixed(1) + 'k'
-const formatDmg = (num: number) => (num / 1000).toFixed(1) + 'k'
 
 onMounted(() => {
   if (matchId) fetchMatchDetail()
@@ -203,7 +204,7 @@ onMounted(() => {
               v-for="game in matchData.games" 
               :key="game.gameNumber" 
               :label="`Game ${game.gameNumber}`" 
-              :name="game.gameNumber"
+              :name="String(game.gameNumber)"
             >
               <!-- Tab 头部信息 -->
               <div class="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
@@ -215,35 +216,34 @@ onMounted(() => {
                  </div>
               </div>
 
-              <!-- 3. 队伍数据对比 -->
+              <!-- 3. 队伍数据对比（按击杀数） -->
               <div v-if="currentGameTeamStats" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                 <!-- Blue Summary -->
-                 <div class="bg-blue-50 rounded-lg p-4 text-center border border-blue-100">
-                    <div class="text-blue-800 font-bold text-xl mb-1">{{ currentGameTeamStats.blue.info.shortName }}</div>
-                    <div class="text-blue-400 text-xs uppercase mb-3">Blue Side</div>
-                    <div class="flex justify-around text-sm">
-                       <div><div class="font-bold text-gray-700">{{ currentGameTeamStats.blue.totalKills }}</div><div class="text-gray-400 text-xs">Kills</div></div>
-                       <div><div class="font-bold text-gray-700">{{ formatGold(currentGameTeamStats.blue.totalGold) }}</div><div class="text-gray-400 text-xs">Gold</div></div>
-                       <div><div class="font-bold text-gray-700">{{ formatDmg(currentGameTeamStats.blue.totalDamage) }}</div><div class="text-gray-400 text-xs">Dmg</div></div>
+                <div class="bg-blue-50 rounded-lg p-4 text-center border border-blue-100">
+                  <div class="text-blue-800 font-bold text-xl mb-1">{{ currentGameTeamStats.blue.info.shortName }}</div>
+                  <div class="text-blue-400 text-xs uppercase mb-3">Blue Side</div>
+                  <div class="flex justify-center text-sm">
+                    <div>
+                      <div class="font-bold text-gray-700">{{ currentGameTeamStats.blue.totalKills }}</div>
+                      <div class="text-gray-400 text-xs">Total Kills</div>
                     </div>
-                 </div>
+                  </div>
+                </div>
 
-                 <!-- VS Icon -->
-                 <div class="flex items-center justify-center font-bold text-gray-300 italic text-2xl">VS</div>
+                <div class="flex items-center justify-center font-bold text-gray-300 italic text-2xl">VS</div>
 
-                 <!-- Red Summary -->
-                 <div class="bg-red-50 rounded-lg p-4 text-center border border-red-100">
-                    <div class="text-red-800 font-bold text-xl mb-1">{{ currentGameTeamStats.red.info.shortName }}</div>
-                    <div class="text-red-400 text-xs uppercase mb-3">Red Side</div>
-                    <div class="flex justify-around text-sm">
-                       <div><div class="font-bold text-gray-700">{{ currentGameTeamStats.red.totalKills }}</div><div class="text-gray-400 text-xs">Kills</div></div>
-                       <div><div class="font-bold text-gray-700">{{ formatGold(currentGameTeamStats.red.totalGold) }}</div><div class="text-gray-400 text-xs">Gold</div></div>
-                       <div><div class="font-bold text-gray-700">{{ formatDmg(currentGameTeamStats.red.totalDamage) }}</div><div class="text-gray-400 text-xs">Dmg</div></div>
+                <div class="bg-red-50 rounded-lg p-4 text-center border border-red-100">
+                  <div class="text-red-800 font-bold text-xl mb-1">{{ currentGameTeamStats.red.info.shortName }}</div>
+                  <div class="text-red-400 text-xs uppercase mb-3">Red Side</div>
+                  <div class="flex justify-center text-sm">
+                    <div>
+                      <div class="font-bold text-gray-700">{{ currentGameTeamStats.red.totalKills }}</div>
+                      <div class="text-gray-400 text-xs">Total Kills</div>
                     </div>
-                 </div>
+                  </div>
+                </div>
               </div>
 
-              <!-- 4. 选手详细数据表 -->
+              <!-- 4. 选手详细数据表（基于 kills/deaths/assists） -->
               <div v-if="currentGameTeamStats" class="space-y-8 pb-4">
                 
                 <!-- Blue Team Table -->
@@ -261,26 +261,15 @@ onMounted(() => {
                         </div>
                       </template>
                     </el-table-column>
-                    <el-table-column label="Hero" min-width="100">
+                    <el-table-column label="Hero" min-width="120">
                       <template #default="{ row }">
                         {{ row.championName }} 
-                        <span class="text-xs text-gray-400 ml-1">Lv{{ row.playerLevel }}</span>
                       </template>
                     </el-table-column>
-                    <el-table-column label="KDA" min-width="100" align="center">
+                    <el-table-column label="K / D / A" min-width="110" align="center">
                       <template #default="{ row }">
                          <span class="font-mono">{{ row.kills }}/{{ row.deaths }}/{{ row.assists }}</span>
                       </template>
-                    </el-table-column>
-                    <el-table-column label="Damage" prop="totalDamageDealt" min-width="90" align="right">
-                       <template #default="{ row }">{{ (row.totalDamageDealt / 1000).toFixed(1) }}k</template>
-                    </el-table-column>
-                    <el-table-column label="Gold" prop="goldEarned" min-width="90" align="right">
-                       <template #default="{ row }">{{ (row.goldEarned / 1000).toFixed(1) }}k</template>
-                    </el-table-column>
-                    <el-table-column label="CS" prop="minionsKilled" width="70" align="right" />
-                    <el-table-column label="KP%" width="80" align="right">
-                      <template #default="{ row }">{{ (row.killParticipation * 100).toFixed(0) }}%</template>
                     </el-table-column>
                   </el-table>
                 </div>
@@ -300,26 +289,15 @@ onMounted(() => {
                         </div>
                       </template>
                     </el-table-column>
-                    <el-table-column label="Hero" min-width="100">
+                    <el-table-column label="Hero" min-width="120">
                       <template #default="{ row }">
                         {{ row.championName }} 
-                        <span class="text-xs text-gray-400 ml-1">Lv{{ row.playerLevel }}</span>
                       </template>
                     </el-table-column>
-                    <el-table-column label="KDA" min-width="100" align="center">
+                    <el-table-column label="K / D / A" min-width="110" align="center">
                       <template #default="{ row }">
                          <span class="font-mono">{{ row.kills }}/{{ row.deaths }}/{{ row.assists }}</span>
                       </template>
-                    </el-table-column>
-                    <el-table-column label="Damage" prop="totalDamageDealt" min-width="90" align="right">
-                       <template #default="{ row }">{{ (row.totalDamageDealt / 1000).toFixed(1) }}k</template>
-                    </el-table-column>
-                    <el-table-column label="Gold" prop="goldEarned" min-width="90" align="right">
-                       <template #default="{ row }">{{ (row.goldEarned / 1000).toFixed(1) }}k</template>
-                    </el-table-column>
-                    <el-table-column label="CS" prop="minionsKilled" width="70" align="right" />
-                    <el-table-column label="KP%" width="80" align="right">
-                      <template #default="{ row }">{{ (row.killParticipation * 100).toFixed(0) }}%</template>
                     </el-table-column>
                   </el-table>
                 </div>

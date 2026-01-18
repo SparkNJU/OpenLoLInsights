@@ -1,114 +1,105 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import BaseChart from '@/components/BaseChart.vue'
-import request from '@/utils/request'
+import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { dataApi } from '@/api/data'
 
 const loading = ref(false)
+const query = ref('')
+const players = ref<{ id: number; name: string }[]>([])
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
-const pieOptions = ref<any>({
-  title: { text: '英雄选择率 Top 5', left: 'center' },
-  tooltip: { trigger: 'item' },
-  legend: { orient: 'vertical', left: 'left' },
-  series: [] // 初始为空，等待数据加载
-})
+const handleSearch = async (resetPage: boolean = false) => {
+  if (!query.value.trim()) {
+    ElMessage.warning('请输入选手名字关键字')
+    return
+  }
 
-const barOptions = ref<any>({
-  title: { text: '战队场均击杀', left: 'center' },
-  tooltip: { trigger: 'axis' },
-  xAxis: { type: 'category', data: [] },
-  yAxis: { type: 'value' },
-  series: []
-})
+  if (resetPage) {
+    page.value = 1
+  }
 
-const fetchChartData = async () => {
   loading.value = true
   try {
-    // 1. 获取英雄选择率 (Pick Ban)
-    // POST /api/v1/metrics/query
-    const pieRes: any = await request.post('/metrics/query', {
-      metric: 'pickban',
-      groupBy: ['champion'],
-      limit: 5
-    })
-
-    if (pieRes && pieRes.table) {
-      const data = pieRes.table.map((item: any) => ({
-        value: typeof item.pickRate === 'string' ? parseFloat(item.pickRate) : (item.pickRate || 0),
-        name: item.champion || 'Unknown'
-      }))
-
-      pieOptions.value = {
-        ...pieOptions.value,
-        series: [
-          {
-            name: 'Pick Rate',
-            type: 'pie',
-            radius: '50%',
-            data: data,
-            emphasis: {
-              itemStyle: {
-                shadowBlur: 10,
-                shadowOffsetX: 0,
-                shadowColor: 'rgba(0, 0, 0, 0.5)'
-              }
-            }
-          }
-        ]
-      }
-    }
-
-    // 2. 获取战队场均击杀
-    // 假设 metric 为 'team_stats'，需后端支持
-    const barRes: any = await request.post('/metrics/query', {
-      metric: 'team_stats',
-      groupBy: ['teamId'],
-      limit: 5
-    })
-
-    if (barRes && barRes.table) {
-      const teams = barRes.table.map((item: any) => item.teamId || 'Unknown')
-      const kills = barRes.table.map((item: any) => {
-         const val = item.avgKills ?? item.kills ?? 0;
-         return typeof val === 'string' ? parseFloat(val) : val;
-      })
-
-      barOptions.value = {
-        ...barOptions.value,
-        xAxis: { type: 'category', data: teams },
-        series: [
-          {
-            data: kills,
-            type: 'bar',
-            itemStyle: { color: '#409EFF' }
-          }
-        ]
-      }
-    }
-
+    const res: any = await dataApi.searchPlayers(query.value.trim(), page.value, pageSize.value)
+    const data = res || {}
+    console.log('players/search raw response', res)
+    console.log('players/search data', data)
+    const items = Array.isArray(data.items) ? data.items : []
+    players.value = items.map((p: any) => ({
+      id: p.id,
+      name: p.name
+    }))
+    total.value = typeof data.total === 'number' ? data.total : 0
   } catch (error) {
-    console.error('Failed to fetch chart data:', error)
-    // ElMessage.warning('加载图表数据失败')
+    players.value = []
+    total.value = 0
+    ElMessage.error('选手查询失败')
   } finally {
     loading.value = false
   }
 }
 
-onMounted(() => {
-  fetchChartData()
-})
+const handlePageChange = (newPage: number) => {
+  page.value = newPage
+  handleSearch(false)
+}
 </script>
 
 <template>
-  <div class="space-y-6">
-    <h2 class="text-2xl font-bold text-gray-800">统计分析大盘</h2>
-    
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6" v-loading="loading">
-      <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <BaseChart :options="pieOptions" height="350px" />
+  <div class="space-y-6 h-full flex flex-col">
+    <h2 class="text-2xl font-bold text-gray-800">选手查询</h2>
+
+    <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+      <div class="flex flex-col md:flex-row md:items-center gap-4">
+        <el-input
+          v-model="query"
+          placeholder="请输入选手名称关键字，例如 Faker"
+          clearable
+          class="md:flex-1"
+          @keyup.enter="handleSearch(true)"
+        />
+        <el-button type="primary" @click="handleSearch(true)">
+          查询选手
+        </el-button>
       </div>
-      <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <BaseChart :options="barOptions" height="350px" />
+    </div>
+
+    <div class="flex-1 overflow-hidden">
+      <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-full flex flex-col" v-loading="loading">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-gray-800">查询结果</h3>
+          <span class="text-xs text-gray-400">
+            共 {{ total }} 个选手
+          </span>
+        </div>
+
+        <div class="flex-1 overflow-auto">
+          <el-table
+            :data="players"
+            style="width: 100%"
+            size="small"
+            stripe
+            v-if="players.length > 0"
+          >
+            <el-table-column prop="id" label="ID" width="120" />
+            <el-table-column prop="name" label="选手名称" min-width="200" />
+          </el-table>
+
+          <el-empty v-else description="请先输入关键字并点击查询，或当前关键字无结果" />
+        </div>
+
+        <div class="mt-4 flex justify-end" v-if="total > pageSize">
+          <el-pagination
+            background
+            layout="prev, pager, next"
+            :page-size="pageSize"
+            :total="total"
+            :current-page="page"
+            @current-change="handlePageChange"
+          />
+        </div>
       </div>
     </div>
   </div>

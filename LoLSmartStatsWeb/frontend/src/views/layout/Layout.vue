@@ -92,14 +92,14 @@ const handleLogout = () => {
           赛事数据中心
         </router-link>
 
-        <!-- 菜单 3: 统计图表 -->
+        <!-- 菜单 3: 选手数据 -->
         <router-link to="/stats"
           class="flex items-center px-3 py-3 rounded-lg text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
           :class="{ 'bg-blue-50 text-blue-600 font-medium shadow-sm': activeMenu.includes('/stats') }">
           <el-icon :size="20" class="mr-3">
             <PieChart />
           </el-icon>
-          统计图表
+          选手数据
         </router-link>
       </div>
 
