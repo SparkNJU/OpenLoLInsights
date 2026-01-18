@@ -28,13 +28,40 @@ public class ChatStorageService {
         return "turn_" + UUID.randomUUID().toString().replace("-", "");
     }
 
+    /**
+     * 获取会话，支持匿名用户创建临时会话
+     */
     private ChatSession requireSession(String sessionId, String userId) {
+        // 如果是匿名用户
+        if (userId.startsWith("anonymous_")) {
+            log.debug("[chat.db] Anonymous user access: userId={}, sessionId={}", userId, sessionId);
+
+            return chatSessionRepository.findById(sessionId)
+                    .orElseGet(() -> {
+                        // 创建临时会话
+                        log.info("[chat.db] Creating temporary session for anonymous user: sessionId={}, userId={}",
+                                sessionId, userId);
+
+                        ChatSession s = new ChatSession();
+                        s.setId(sessionId);
+                        s.setUserId(userId);
+                        s.setTitle("临时会话");
+                        s.setStatus("active");
+                        s.setCreatedAt(java.time.Instant.now());
+                        s.setUpdatedAt(java.time.Instant.now());
+
+                        return chatSessionRepository.save(s);
+                    });
+        }
+
+        // 已登录用户，保持原来的检查
         return chatSessionRepository.findById(sessionId)
                 .filter(s -> s.getUserId().equals(userId))
                 .orElseThrow(() -> new BizException("NOT_FOUND", "会话不存在或无权限"));
     }
 
-    public void saveUserMessage(String userId, String sessionId, String turnId, String traceId, String mode, String content) {
+    public void saveUserMessage(String userId, String sessionId, String turnId, String traceId, String mode,
+            String content) {
         ChatSession s = requireSession(sessionId, userId);
 
         ChatMessage m = new ChatMessage();
@@ -54,19 +81,18 @@ public class ChatStorageService {
     }
 
     public ChatMessage saveAssistantMessage(String userId,
-                                           String sessionId,
-                                           String turnId,
-                                           String traceId,
-                                           String mode,
-                                           String content,
-                                           String reportFileId,
-                                           String reportFileName,
-                                           String reportFileType,
-                                           Long reportSize) {
+            String sessionId,
+            String turnId,
+            String traceId,
+            String mode,
+            String content,
+            String reportFileId,
+            String reportFileName,
+            String reportFileType,
+            Long reportSize) {
         ChatSession s = requireSession(sessionId, userId);
 
         // 关键：同一轮(turnId)只保留一条 assistant 记录。
-        // file_meta 可能先到并创建了占位行，这里需要对同一行进行更新补全 content。
         ChatMessage m = repo.findFirstBySessionIdAndTurnIdAndRole(sessionId, turnId, "assistant").orElse(null);
         if (m == null) {
             m = new ChatMessage();
@@ -77,17 +103,18 @@ public class ChatStorageService {
             m.setMode(mode);
             m.setRole("assistant");
             m.setStatus(s.getStatus());
-            log.info("[chat.db] saveAssistantMessage create new assistant row traceId={}, sessionId={}, turnId={}", traceId, sessionId, turnId);
+            log.info("[chat.db] saveAssistantMessage create new assistant row traceId={}, sessionId={}, turnId={}",
+                    traceId, sessionId, turnId);
         } else {
-            // 若本轮先收到了 file_meta，这里会命中占位行
-            log.info("[chat.db] saveAssistantMessage update existing assistant row traceId={}, sessionId={}, turnId={}, messageId={}, existingFileId={}",
+            log.info(
+                    "[chat.db] saveAssistantMessage update existing assistant row traceId={}, sessionId={}, turnId={}, messageId={}, existingFileId={}",
                     traceId, sessionId, turnId, m.getId(), m.getReportFileId());
         }
 
-        // 更新正文（占位行 content="" 会被补全）
+        // 更新正文
         m.setContent(content == null ? "" : content);
 
-        // 回写 file meta：如果调用方传了就覆盖；否则保留之前 upsert 写入的值
+        // 回写 file meta
         if (reportFileId != null && !reportFileId.isBlank()) {
             m.setReportFileId(reportFileId);
             m.setReportFileName(reportFileName == null ? reportFileId : reportFileName);
@@ -97,8 +124,10 @@ public class ChatStorageService {
 
         ChatMessage saved = repo.save(m);
 
-        log.info("[chat.db] saveAssistantMessage saved traceId={}, sessionId={}, turnId={}, mode={}, messageId={}, answerLen={}, reportFileId={}",
-                traceId, sessionId, turnId, mode, saved.getId(), (content == null ? 0 : content.length()), saved.getReportFileId());
+        log.info(
+                "[chat.db] saveAssistantMessage saved traceId={}, sessionId={}, turnId={}, mode={}, messageId={}, answerLen={}, reportFileId={}",
+                traceId, sessionId, turnId, mode, saved.getId(), (content == null ? 0 : content.length()),
+                saved.getReportFileId());
 
         s.setUpdatedAt(java.time.Instant.now());
         chatSessionRepository.save(s);
@@ -106,21 +135,18 @@ public class ChatStorageService {
         return saved;
     }
 
-    /**
-     * 流式 report 场景：file_meta 事件可能先到，也可能晚到。
-     * 这里按 (sessionId, turnId, role=assistant) 定位同一轮 assistant 记录并回写 report_file_*。
-     */
     public void upsertAssistantReportMeta(String userId,
-                                         String sessionId,
-                                         String turnId,
-                                         String traceId,
-                                         String mode,
-                                         String reportFileId,
-                                         String reportFileName,
-                                         String reportFileType,
-                                         Long reportSize) {
+            String sessionId,
+            String turnId,
+            String traceId,
+            String mode,
+            String reportFileId,
+            String reportFileName,
+            String reportFileType,
+            Long reportSize) {
         if (reportFileId == null || reportFileId.isBlank()) {
-            log.warn("[chat.db] upsertAssistantReportMeta skipped(blank fileId) traceId={}, sessionId={}, turnId={}", traceId, sessionId, turnId);
+            log.warn("[chat.db] upsertAssistantReportMeta skipped(blank fileId) traceId={}, sessionId={}, turnId={}",
+                    traceId, sessionId, turnId);
             return;
         }
 
@@ -128,7 +154,8 @@ public class ChatStorageService {
 
         ChatMessage m = repo.findFirstBySessionIdAndTurnIdAndRole(sessionId, turnId, "assistant").orElse(null);
         if (m == null) {
-            log.info("[chat.db] upsertAssistantReportMeta assistant row not found, create placeholder. traceId={}, sessionId={}, turnId={}",
+            log.info(
+                    "[chat.db] upsertAssistantReportMeta assistant row not found, create placeholder. traceId={}, sessionId={}, turnId={}",
                     traceId, sessionId, turnId);
             m = new ChatMessage();
             m.setUserId(userId);
@@ -140,7 +167,8 @@ public class ChatStorageService {
             m.setStatus(s.getStatus());
             m.setContent("");
         } else {
-            log.info("[chat.db] upsertAssistantReportMeta hit existing assistant row. traceId={}, sessionId={}, turnId={}, messageId={} ",
+            log.info(
+                    "[chat.db] upsertAssistantReportMeta hit existing assistant row. traceId={}, sessionId={}, turnId={}, messageId={} ",
                     traceId, sessionId, turnId, m.getId());
         }
 
@@ -150,8 +178,10 @@ public class ChatStorageService {
         m.setReportSize(reportSize);
 
         ChatMessage saved = repo.save(m);
-        log.info("[chat.db] upsertAssistantReportMeta saved traceId={}, sessionId={}, turnId={}, messageId={}, fileId={}, fileName={}, fileType={}, size={}",
-                traceId, sessionId, turnId, saved.getId(), reportFileId, saved.getReportFileName(), saved.getReportFileType(), saved.getReportSize());
+        log.info(
+                "[chat.db] upsertAssistantReportMeta saved traceId={}, sessionId={}, turnId={}, messageId={}, fileId={}, fileName={}, fileType={}, size={}",
+                traceId, sessionId, turnId, saved.getId(), reportFileId, saved.getReportFileName(),
+                saved.getReportFileType(), saved.getReportSize());
 
         s.setUpdatedAt(java.time.Instant.now());
         chatSessionRepository.save(s);

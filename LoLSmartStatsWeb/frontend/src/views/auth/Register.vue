@@ -38,7 +38,8 @@ const handleRegister = async () => {
       localStorage.setItem('refreshToken', res.tokens.refreshToken)
       localStorage.setItem('user', JSON.stringify(res.user))
       ElMessage.success('注册成功')
-      router.push('/')
+      // 先跳转到主页，然后刷新以确保状态正确更新
+      window.location.href = '/'      
     }
   } catch (err) {
     console.error(err)

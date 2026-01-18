@@ -2,9 +2,9 @@
 import { ref, reactive, nextTick, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { 
-  Position, Plus, Document, ChatDotRound, UserFilled, PieChart, 
-  Edit, Delete, Search, Message as MessageIcon , Clock
+import {
+  Position, Plus, Document, ChatDotRound, UserFilled, PieChart,
+  Edit, Delete, Search, Message as MessageIcon, Clock
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { chatApi } from '@/api/chat'
@@ -34,7 +34,7 @@ const userInput = ref('')
 const loading = ref(false)
 const showContext = ref(false)
 const chatContainer = ref<HTMLElement | null>(null)
-const isSidebarOpen = ref(false) 
+const isSidebarOpen = ref(false)
 
 // 2. 会话管理相关 (从 Layout 移入)
 const sessions = ref<ChatSession[]>([])
@@ -82,6 +82,106 @@ const closeSidebar = () => {
   }
 }
 
+// --- 工具函数 ---
+// 生成临时sessionId
+const generateTempSessionId = () => {
+  return 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)
+}
+
+// 获取或创建sessionId
+const getOrCreateSessionId = () => {
+  if (!currentSessionId.value) {
+    const tempId = generateTempSessionId()
+    currentSessionId.value = tempId
+    console.log('Generated temporary sessionId:', tempId)
+  }
+  return currentSessionId.value
+}
+
+// --- 测试函数 ---
+
+// 添加一个测试接口可用性的函数
+const testApiHealth = async () => {
+  try {
+    console.log('=== Testing API Health ===')
+
+    // 测试其他不需要认证的接口
+    const healthResponse = await fetch('/api/v1/auth/health', {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      }
+    })
+
+    console.log('Health endpoint status:', healthResponse.status)
+    if (healthResponse.ok) {
+      const healthData = await healthResponse.json()
+      console.log('Health data:', healthData)
+    }
+
+    return healthResponse.status
+  } catch (err) {
+    console.error('Health check failed:', err)
+    return -1
+  }
+}
+
+// 添加一个测试认证状态的函数
+const testAuthStatus = async () => {
+  try {
+    const token = localStorage.getItem('accessToken')
+    if (!token) {
+      console.log('No token found')
+      return false
+    }
+
+    console.log('=== Testing Auth Status ===')
+    console.log('Token exists, length:', token.length)
+
+    // 测试需要认证的接口
+    const testResponse = await fetch('/api/v1/auth/me', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json'
+      }
+    })
+
+    console.log('Auth test status:', testResponse.status)
+    if (testResponse.ok) {
+      const userData = await testResponse.json()
+      console.log('User data:', userData)
+      return true
+    } else {
+      console.log('Auth failed, status:', testResponse.status)
+      return false
+    }
+  } catch (err) {
+    console.error('Auth test error:', err)
+    return false
+  }
+}
+
+// 登出函数
+const handleLogout = () => {
+  ElMessageBox.confirm(
+    '确定要退出登录吗？',
+    '提示',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  ).then(() => {
+    localStorage.removeItem('accessToken')
+    isLoggedIn.value = false
+    sessions.value = []
+    currentSessionId.value = null
+    messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
+    router.replace({ query: {} })
+    ElMessage.success('已退出登录')
+  })
+}
 
 // --- 逻辑方法：会话管理 (CRUD) ---
 
@@ -189,7 +289,7 @@ const handleDocumentClick = (e: MouseEvent) => {
   if (!elVal) return
   const path = (e as any).composedPath?.() as EventTarget[] | undefined
   const isInside = path ? path.includes(elVal) : elVal.contains(e.target as Node)
-  
+
   if (isInside) {
     hasInteractedInside.value = true
     return
@@ -225,14 +325,13 @@ const fetchHistory = async () => {
           ts: item.createdAt,
           dataRefs: item.reportFileId
             ? [
-                {
-                  type: 'report',
-                  fileId: item.reportFileId,
-                  downloadUrl: `/api/v1/chat/files/${item.reportFileId}${
-                    currentSessionId.value ? `?sessionId=${currentSessionId.value}` : ''
+              {
+                type: 'report',
+                fileId: item.reportFileId,
+                downloadUrl: `/api/v1/chat/files/${item.reportFileId}${currentSessionId.value ? `?sessionId=${currentSessionId.value}` : ''
                   }`
-                }
-              ]
+              }
+            ]
             : []
         }))
     } else {
@@ -249,7 +348,7 @@ const fetchHistory = async () => {
 const handleNewSession = async () => {
   if (!isLoggedIn.value) {
     messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
-    currentSessionId.value = null
+    currentSessionId.value = generateTempSessionId()
     router.replace({ query: {} })
     return
   }
@@ -271,39 +370,70 @@ const handleNewSession = async () => {
 // 发送消息
 const handleSend = async () => {
   if (!userInput.value.trim() || loading.value) return
-  
+
   // 未登录限制
   if (!isLoggedIn.value) {
     if (guestCount.value >= guestLimit) {
-        ElMessage.warning('请登录以继续使用完整功能。')
-        return
+      ElMessage.warning('请登录以继续使用完整功能。')
+      return
     }
     guestCount.value++
     localStorage.setItem('guest_chat_count', guestCount.value.toString())
   }
-  
+
   const content = userInput.value
   userInput.value = ''
-  
+
   messages.value.push({ role: 'user', content })
   scrollToBottom()
-  
+
   const aiMsgIndex = messages.value.length
   messages.value.push({ role: 'assistant', content: '', loading: true })
   loading.value = true
 
-  const token = localStorage.getItem('accessToken')
   const ctrl = new AbortController()
-  
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  // 【关键修复】获取或创建sessionId
+  const sessionId = getOrCreateSessionId()
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'text/event-stream'
+  }
+
+  // 【暂时注释掉 Authorization 头】让我们先测试不带认证的情况
+  // if (isLoggedIn.value) {
+  //   const token = localStorage.getItem('accessToken')
+  //   if (token && token.trim()) {
+  //     headers['Authorization'] = `Bearer ${token}`
+  //   }
+  // }
+
+  // 调试信息
+  console.log('=== SSE Request Details ===')
+  console.log('URL:', '/api/v1/chat/stream')
+  console.log('Method: POST')
+  console.log('Headers:', headers)
+  console.log('isLoggedIn:', isLoggedIn.value)
+  console.log('Session ID:', sessionId)
+  console.log('Request Body:', {
+    sessionId: sessionId,
+    message: content,
+    mode: 'data+analysis',
+    context: {
+      tournamentId: context.tournamentId,
+      dateRange: context.dateRange.length > 0 ? { from: context.dateRange[0], to: context.dateRange[1] } : undefined,
+      teamIds: context.teamIds.length > 0 ? context.teamIds : undefined,
+      patch: context.patch || undefined
+    }
+  })
 
   try {
     await fetchEventSource('/api/v1/chat/stream', {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({
-        sessionId: currentSessionId.value, 
+        sessionId: sessionId,  // 【重要】确保sessionId不为null
         message: content,
         mode: 'data+analysis',
         context: {
@@ -315,23 +445,44 @@ const handleSend = async () => {
       }),
       signal: ctrl.signal,
       onopen(response) {
-        if (response.ok) return Promise.resolve()
-        throw new Error(`Error: ${response.status}`)
+        console.log('=== SSE Connection Opened ===')
+        console.log('Status:', response.status)
+        console.log('Status Text:', response.statusText)
+
+        // 记录所有响应头
+        console.log('Response Headers:')
+        response.headers.forEach((value, key) => {
+          console.log(`  ${key}: ${value}`)
+        })
+
+        if (response.ok) {
+          console.log('Connection successful')
+          return Promise.resolve()
+        } else {
+          console.error('Connection failed:', response.status, response.statusText)
+          // 尝试读取错误信息
+          return response.text().then(text => {
+            console.error('Error response body:', text || '(empty)')
+            throw new Error(`HTTP ${response.status}: ${response.statusText} - ${text}`)
+          })
+        }
       },
       onmessage(msg) {
+        console.log('SSE Message:', msg.event, 'data length:', msg.data?.length)
         if (msg.event === 'meta') {
-            const data = JSON.parse(msg.data)
-            // 如果后端返回了新的 sessionId (冷启动会话)，更新本地
-            if (data.sessionId && data.sessionId !== currentSessionId.value) {
-                currentSessionId.value = data.sessionId
-                // 如果当前列表里没有这个ID（意味着是第一次自动创建），需要加进去
-                if (isLoggedIn.value && !sessions.value.find(s => s.id === data.sessionId)) {
-                    sessions.value.unshift({ id: data.sessionId, name: data.title || '新对话' })
-                    saveSessions()
-                    // 更新 URL 但不刷新
-                    router.replace({ query: { sessionId: data.sessionId } })
-                }
+          const data = JSON.parse(msg.data)
+          console.log('Meta data:', data)
+          // 如果后端返回了新的 sessionId (冷启动会话)，更新本地
+          if (data.sessionId && data.sessionId !== currentSessionId.value) {
+            currentSessionId.value = data.sessionId
+            // 如果当前列表里没有这个ID（意味着是第一次自动创建），需要加进去
+            if (isLoggedIn.value && !sessions.value.find(s => s.id === data.sessionId)) {
+              sessions.value.unshift({ id: data.sessionId, name: data.title || '新对话' })
+              saveSessions()
+              // 更新 URL 但不刷新
+              router.replace({ query: { sessionId: data.sessionId } })
             }
+          }
         } else if (msg.event === 'token') {
           const data = JSON.parse(msg.data)
           messages.value[aiMsgIndex].content += (data.delta || '')
@@ -343,17 +494,56 @@ const handleSend = async () => {
         } else if (msg.event === 'done') {
           loading.value = false
           messages.value[aiMsgIndex].loading = false
+          console.log('SSE Stream completed')
         } else if (msg.event === 'error') {
-            throw new Error(msg.data)
+          console.error('SSE Error event:', msg.data)
+          throw new Error(msg.data)
         }
       },
-      onerror(err) { throw err }
+      onerror(err) {
+        console.error('SSE onerror:', err)
+        throw err
+      },
+      onclose() {
+        console.log('SSE Connection closed')
+      }
     })
   } catch (err) {
-    console.error(err)
-    messages.value[aiMsgIndex].content += '\n[请求出错]'
+    console.error('SSE请求失败:', err)
+    messages.value[aiMsgIndex].content += '\n[请求出错: ' + (err instanceof Error ? err.message : '未知错误') + ']'
     loading.value = false
     messages.value[aiMsgIndex].loading = false
+
+    // 显示错误信息给用户
+    if (err instanceof Error) {
+      if (err.message.includes('403')) {
+        ElMessage.error('访问被拒绝 (403)。如果已登录，请尝试退出重新登录。')
+        // 建议用户退出登录
+        if (isLoggedIn.value) {
+          setTimeout(() => {
+            ElMessageBox.confirm(
+              '认证可能已过期，是否退出登录？',
+              '提示',
+              {
+                confirmButtonText: '退出',
+                cancelButtonText: '取消',
+                type: 'warning',
+              }
+            ).then(() => {
+              localStorage.removeItem('accessToken')
+              isLoggedIn.value = false
+              window.location.reload()
+            })
+          }, 1000)
+        }
+      } else if (err.message.includes('400')) {
+        ElMessage.error('请求参数错误，请刷新页面重试')
+      } else {
+        ElMessage.error('请求失败: ' + err.message)
+      }
+    } else {
+      ElMessage.error('请求失败，请稍后重试')
+    }
   }
 }
 
@@ -377,6 +567,18 @@ const loadContextOptions = async () => {
     }
   } catch (e) {
     console.error('加载上下文筛选项失败', e)
+    // 设置默认值
+    options.tournaments = [
+      { label: 'S14 全球总决赛', value: 's14_worlds' },
+      { label: 'LPL 夏季赛', value: 'lpl_summer_2024' }
+    ]
+    options.teams = [
+      { label: 'T1', value: '1' },
+      { label: 'GEN', value: '2' },
+      { label: 'JDG', value: '3' },
+      { label: 'BLG', value: '4' }
+    ]
+    context.tournamentId = 's14_worlds'
   }
 }
 
@@ -392,16 +594,95 @@ watch(() => route.query.sessionId, (newId) => {
   }
 }, { immediate: true })
 
-onMounted(() => {
+onMounted(async () => {
+  // 清理可能的无效token
   const token = localStorage.getItem('accessToken')
-  isLoggedIn.value = !!token
+  if (token && token.trim()) {
+    // 测试 token 是否有效
+    const isValid = await testAuthStatus()
+    isLoggedIn.value = isValid
+
+    if (!isValid) {
+      console.log('Token invalid, clearing...')
+      localStorage.removeItem('accessToken')
+      isLoggedIn.value = false
+      ElMessage.warning('登录状态已过期，请重新登录')
+    }
+  } else {
+    isLoggedIn.value = false
+    localStorage.removeItem('accessToken')
+  }
+
   if (!isLoggedIn.value) {
     const count = localStorage.getItem('guest_chat_count')
     guestCount.value = count ? parseInt(count) : 0
   }
-  loadSessions()
-  loadContextOptions()
+
+  await loadSessions()
+  await loadContextOptions()
   document.addEventListener('pointerdown', handleDocumentClick, true)
+
+  // 初始化时生成一个临时sessionId
+  if (!currentSessionId.value) {
+    currentSessionId.value = generateTempSessionId()
+    console.log('Initial temporary sessionId:', currentSessionId.value)
+  }
+
+  // 测试 API 健康状态
+  console.log('=== Initializing Chat Component ===')
+  await testApiHealth()
+
+  // 测试 SSE 连接（不使用认证）
+  const testHeaders = {
+    'Content-Type': 'application/json',
+    'Accept': 'text/event-stream'
+  }
+
+  // 先测试不带认证的请求
+  console.log('=== Testing SSE without auth ===')
+  const testNoAuth = await fetch('/api/v1/chat/stream', {
+    method: 'POST',
+    headers: testHeaders,
+    body: JSON.stringify({
+      sessionId: getOrCreateSessionId(),  // 测试时也要提供sessionId
+      message: 'test connection without auth',
+      mode: 'data+analysis'
+    })
+  })
+
+  console.log('SSE test without auth:', testNoAuth.status)
+
+  // 如果登录了，测试带认证的请求
+  if (isLoggedIn.value) {
+    const token = localStorage.getItem('accessToken')
+    if (token) {
+      console.log('=== Testing SSE with auth ===')
+      const testWithAuth = await fetch('/api/v1/chat/stream', {
+        method: 'POST',
+        headers: {
+          ...testHeaders,
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          sessionId: getOrCreateSessionId(),
+          message: 'test connection with auth',
+          mode: 'data+analysis'
+        })
+      })
+
+      console.log('SSE test with auth:', testWithAuth.status)
+
+      // 如果是403，尝试查看是否有错误信息
+      if (testWithAuth.status === 403) {
+        try {
+          const errorText = await testWithAuth.text()
+          console.log('403 error response:', errorText)
+        } catch (e) {
+          console.log('No error body in 403 response')
+        }
+      }
+    }
+  }
 })
 
 onUnmounted(() => {
@@ -411,16 +692,13 @@ onUnmounted(() => {
 
 <template>
   <div class="flex h-full w-full bg-white">
-    
+
     <!-- 1. 左侧：聊天主界面 -->
-    <!-- [修改点] 添加 @click="closeSidebar"：点击主界面的任何地方都会尝试关闭侧边栏 -->
-    <div 
-      class="flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300"
-      @click="closeSidebar"
-    >
-      
+    <div class="flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300" @click="closeSidebar">
+
       <!-- Header -->
-      <div class="flex-none bg-white border-b border-gray-100 px-8 py-5 flex items-center justify-between shrink-0 z-10">
+      <div
+        class="flex-none bg-white border-b border-gray-100 px-8 py-5 flex items-center justify-between shrink-0 z-10">
         <div>
           <h2 class="text-2xl font-bold text-gray-800 tracking-tight flex items-center gap-3">
             <span class="w-1.5 h-7 bg-blue-600 rounded-full inline-block shadow-sm shadow-blue-200"></span>
@@ -431,35 +709,34 @@ onUnmounted(() => {
             <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
           </p>
         </div>
-        
-        <!-- [修改点] 右侧按钮：改为更显眼的文字按钮 -->
-        <!-- 使用 @click.stop 防止点击按钮本身触发外层的 closeSidebar -->
+
+        <!-- 右侧按钮区域 -->
         <div class="flex items-center gap-4">
-            <span class="hidden lg:block text-xs font-mono text-gray-300 mr-2">Model: deepseek-chat-v3</span>
-            
-            <el-button 
-              :type="isSidebarOpen ? 'primary' : 'default'" 
-              :icon="Clock" 
-              size="large"
-              class="!rounded-xl !px-5 transition-all duration-300 shadow-sm hover:shadow-md border-gray-200"
-              :class="{ '!bg-blue-600 !border-blue-600': isSidebarOpen }"
-              @click.stop="toggleSidebar"
-            >
-              {{ isSidebarOpen ? '收起会话' : '历史会话' }}
-            </el-button>
+          <span class="hidden lg:block text-xs font-mono text-gray-300 mr-2">Model: deepseek-chat-v3</span>
+
+          <!-- 登出按钮（如果已登录） -->
+          <el-button v-if="isLoggedIn" type="warning" size="small" @click="handleLogout" class="!rounded-lg">
+            退出登录
+          </el-button>
+
+          <el-button :type="isSidebarOpen ? 'primary' : 'default'" :icon="Clock" size="large"
+            class="!rounded-xl !px-5 transition-all duration-300 shadow-sm hover:shadow-md border-gray-200"
+            :class="{ '!bg-blue-600 !border-blue-600': isSidebarOpen }" @click.stop="toggleSidebar">
+            {{ isSidebarOpen ? '收起会话' : '历史会话' }}
+          </el-button>
         </div>
       </div>
 
-      <!-- Messages Area (内容不变) -->
+      <!-- Messages Area -->
       <div ref="chatContainer" class="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 bg-white scroll-smooth">
-         <!-- ... (消息循环逻辑保持不变) ... -->
-         <div v-for="(msg, idx) in messages" :key="idx" 
-          class="flex w-full animate-fade-in-up" 
-          :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
-        >
+        <div v-for="(msg, idx) in messages" :key="idx" class="flex w-full animate-fade-in-up"
+          :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
           <div class="flex max-w-[90%] md:max-w-[75%] gap-3">
-            <div v-if="msg.role === 'assistant'" class="w-8 h-8 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0 text-blue-600 mt-1">
-              <el-icon><ChatDotRound /></el-icon>
+            <div v-if="msg.role === 'assistant'"
+              class="w-8 h-8 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0 text-blue-600 mt-1">
+              <el-icon>
+                <ChatDotRound />
+              </el-icon>
             </div>
             <div class="flex flex-col">
               <div class="p-4 rounded-2xl text-sm leading-7 shadow-sm border"
@@ -472,39 +749,41 @@ onUnmounted(() => {
                 </div>
               </div>
               <div v-if="msg.dataRefs && msg.dataRefs.length" class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div
-                  v-for="(data, dIdx) in msg.dataRefs"
-                  :key="dIdx"
+                <div v-for="(data, dIdx) in msg.dataRefs" :key="dIdx"
                   class="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                  @click="data.type === 'report' && data.downloadUrl ? window.open(data.downloadUrl, '_blank') : null"
-                >
+                  @click="data.type === 'report' && data.downloadUrl ? window.open(data.downloadUrl, '_blank') : null">
                   <div class="text-xs font-bold text-gray-600 mb-2 flex items-center">
-                    <el-icon class="mr-1 text-blue-500"><PieChart /></el-icon>
+                    <el-icon class="mr-1 text-blue-500">
+                      <PieChart />
+                    </el-icon>
                     {{ data.title || (data.type === 'report' ? '分析报告' : '数据图表') }}
                   </div>
                   <div
-                    class="h-24 bg-gray-50 rounded flex items-center justify-center text-gray-400 text-xs border border-dashed border-gray-200"
-                  >
+                    class="h-24 bg-gray-50 rounded flex items-center justify-center text-gray-400 text-xs border border-dashed border-gray-200">
                     {{ data.type === 'report' ? '点击下载报告文件' : '图表预览' }}
                   </div>
                 </div>
               </div>
             </div>
-            <div v-if="msg.role === 'user'" class="w-8 h-8 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0 text-gray-600 mt-1">
-              <el-icon><UserFilled /></el-icon>
+            <div v-if="msg.role === 'user'"
+              class="w-8 h-8 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0 text-gray-600 mt-1">
+              <el-icon>
+                <UserFilled />
+              </el-icon>
             </div>
           </div>
         </div>
       </div>
 
       <!-- Input Area -->
-      <!-- [注意] 输入框区域也属于"左侧主界面"，所以点击这里的空白处也会触发 closeSidebar，符合预期 -->
       <div class="p-6 bg-white shrink-0">
-         <!-- ... (输入区域内容保持不变) ... -->
-         <div class="max-w-4xl mx-auto">
+        <div class="max-w-4xl mx-auto">
           <div class="flex items-center justify-between mb-3 px-1">
-            <el-button size="small" :type="showContext ? 'primary' : 'info'" :plain="!showContext" round @click.stop="showContext = !showContext">
-              <el-icon class="mr-1"><Document /></el-icon> 上下文控制
+            <el-button size="small" :type="showContext ? 'primary' : 'info'" :plain="!showContext" round
+              @click.stop="showContext = !showContext">
+              <el-icon class="mr-1">
+                <Document />
+              </el-icon> 上下文控制
             </el-button>
             <div v-if="showContext" class="flex items-center space-x-2 animate-fade-in" @click.stop>
               <el-select v-model="context.tournamentId" placeholder="赛事" size="small" class="!w-32">
@@ -515,29 +794,33 @@ onUnmounted(() => {
               </el-select>
             </div>
           </div>
-          <div class="relative group" @click.stop> <!-- 阻止点击输入框本身触发关闭（虽然触发也没事，但最好保留焦点逻辑） -->
-            <el-input v-model="userInput" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="问问我关于 S14 决赛 T1 的表现..." class="!text-base custom-textarea" @keydown.enter.exact.prevent="handleSend"/>
-            <el-button type="primary" circle class="absolute bottom-3 right-3 shadow-lg transition-transform hover:scale-105" :disabled="isSendDisabled" @click="handleSend">
-              <el-icon><Position /></el-icon>
+          <div class="relative group" @click.stop>
+            <el-input v-model="userInput" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }"
+              placeholder="问问我关于 S14 决赛 T1 的表现..." class="!text-base custom-textarea"
+              @keydown.enter.exact.prevent="handleSend" />
+            <el-button type="primary" circle
+              class="absolute bottom-3 right-3 shadow-lg transition-transform hover:scale-105"
+              :disabled="isSendDisabled" @click="handleSend">
+              <el-icon>
+                <Position />
+              </el-icon>
             </el-button>
           </div>
-          <div class="text-center mt-2 text-xs text-gray-400 select-none">DeepSeek V3 Generated Content. Check important info.</div>
+          <div class="text-center mt-2 text-xs text-gray-400 select-none">DeepSeek V3 Generated Content. Check important
+            info.</div>
         </div>
       </div>
     </div>
 
-    <!-- 2. 右侧：会话列表侧边栏 (点击这里本身不应该关闭自己，所以要加 @click.stop) -->
-    <aside 
+    <!-- 2. 右侧：会话列表侧边栏 -->
+    <aside
       class="border-gray-200 bg-gray-50 flex flex-col shrink-0 transition-all duration-300 ease-in-out overflow-hidden h-full border-l"
-      :class="isSidebarOpen ? 'w-[300px] opacity-100' : 'w-0 opacity-0 border-l-0'"
-      @click.stop
-    >
+      :class="isSidebarOpen ? 'w-[300px] opacity-100' : 'w-0 opacity-0 border-l-0'" @click.stop>
       <div class="w-[300px] flex flex-col h-full">
-         <!-- ... (侧边栏内容保持不变) ... -->
-         <div class="h-16 flex items-center justify-between px-4 border-b border-gray-200/50">
+        <div class="h-16 flex items-center justify-between px-4 border-b border-gray-200/50">
           <span class="font-medium text-gray-600">历史会话</span>
           <el-tooltip content="新建会话" placement="bottom">
-             <el-button :icon="Plus" circle size="small" @click="handleNewSession" />
+            <el-button :icon="Plus" circle size="small" @click="handleNewSession" />
           </el-tooltip>
         </div>
 
@@ -548,34 +831,43 @@ onUnmounted(() => {
         <div class="flex-1 overflow-y-auto px-2 space-y-1 py-2">
           <template v-if="isLoggedIn && sessions.length">
             <div v-for="session in sessions" :key="session.id" class="group relative">
-              <div 
-                v-if="editingSessionId !== session.id"
-                @click="router.push({ query: { sessionId: session.id } })"
+              <div v-if="editingSessionId !== session.id" @click="router.push({ query: { sessionId: session.id } })"
                 class="flex items-center px-3 py-3 rounded-lg cursor-pointer transition-all duration-200 border border-transparent"
-                :class="currentSessionId === session.id 
-                  ? 'bg-white border-gray-200 shadow-sm text-blue-600' 
-                  : 'text-gray-600 hover:bg-gray-200/50'"
-              >
-                <el-icon class="mr-3 text-lg" :class="currentSessionId === session.id ? 'text-blue-500' : 'text-gray-400'"><MessageIcon /></el-icon>
+                :class="currentSessionId === session.id
+                  ? 'bg-white border-gray-200 shadow-sm text-blue-600'
+                  : 'text-gray-600 hover:bg-gray-200/50'">
+                <el-icon class="mr-3 text-lg"
+                  :class="currentSessionId === session.id ? 'text-blue-500' : 'text-gray-400'">
+                  <MessageIcon />
+                </el-icon>
                 <span class="truncate text-sm font-medium flex-1">{{ session.name }}</span>
-                <div class="hidden group-hover:flex items-center bg-inherit pl-2" :class="currentSessionId === session.id ? 'bg-white' : 'bg-gray-200/50'">
-                   <el-icon class="text-gray-400 hover:text-blue-500 cursor-pointer mr-2" size="14" @click.stop="startEditingSession(session.id, session.name)"><Edit /></el-icon>
-                   <el-icon class="text-gray-400 hover:text-red-500 cursor-pointer" size="14" @click.stop="deleteSession(session.id)"><Delete /></el-icon>
+                <div class="hidden group-hover:flex items-center bg-inherit pl-2"
+                  :class="currentSessionId === session.id ? 'bg-white' : 'bg-gray-200/50'">
+                  <el-icon class="text-gray-400 hover:text-blue-500 cursor-pointer mr-2" size="14"
+                    @click.stop="startEditingSession(session.id, session.name)">
+                    <Edit />
+                  </el-icon>
+                  <el-icon class="text-gray-400 hover:text-red-500 cursor-pointer" size="14"
+                    @click.stop="deleteSession(session.id)">
+                    <Delete />
+                  </el-icon>
                 </div>
               </div>
-              <div v-else ref="editContainer" class="flex items-center px-2 py-2 bg-white rounded-lg border border-blue-200 shadow-sm ring-2 ring-blue-50">
-                <el-input v-model="editingSessionName" size="small" ref="nameInput" @keyup.enter="saveSessionName" @keyup.esc="cancelEditing" />
+              <div v-else ref="editContainer"
+                class="flex items-center px-2 py-2 bg-white rounded-lg border border-blue-200 shadow-sm ring-2 ring-blue-50">
+                <el-input v-model="editingSessionName" size="small" ref="nameInput" @keyup.enter="saveSessionName"
+                  @keyup.esc="cancelEditing" />
                 <el-button type="primary" link size="small" class="ml-1" @click="saveSessionName">OK</el-button>
               </div>
             </div>
           </template>
-          
+
           <div v-else-if="isLoggedIn" class="text-center py-10 text-gray-400 text-sm">暂无历史会话</div>
-          
+
           <div v-else class="p-4 bg-blue-50 rounded-lg border border-blue-100 m-2">
-             <div class="text-blue-800 font-medium text-sm mb-1">访客模式</div>
-             <p class="text-xs text-blue-600">登录后可保存多条对话历史。</p>
-             <el-button type="primary" size="small" class="w-full mt-3" @click="router.push('/login')">去登录</el-button>
+            <div class="text-blue-800 font-medium text-sm mb-1">访客模式</div>
+            <p class="text-xs text-blue-600">登录后可保存多条对话历史。</p>
+            <el-button type="primary" size="small" class="w-full mt-3" @click="router.push('/login')">去登录</el-button>
           </div>
         </div>
       </div>
@@ -588,15 +880,18 @@ onUnmounted(() => {
 :deep(.custom-textarea .el-textarea__inner) {
   padding: 12px 16px;
   border-radius: 12px;
-  background-color: #f9fafb; /* gray-50 */
-  border: 1px solid #e5e7eb; /* gray-200 */
+  background-color: #f9fafb;
+  /* gray-50 */
+  border: 1px solid #e5e7eb;
+  /* gray-200 */
   box-shadow: none !important;
   transition: all 0.2s;
 }
 
 :deep(.custom-textarea .el-textarea__inner:focus) {
   background-color: #ffffff;
-  border-color: #3b82f6; /* blue-500 */
+  border-color: #3b82f6;
+  /* blue-500 */
   box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important;
 }
 
@@ -610,6 +905,7 @@ onUnmounted(() => {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);

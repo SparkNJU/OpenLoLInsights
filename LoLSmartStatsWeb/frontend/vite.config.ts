@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '/api': {
-          target: env.VITE_API_TARGET || 'http://localhost:8080',
+          target: 'http://localhost:8080',
           changeOrigin: true,
           // rewrite: (path) => path.replace(/^\/api/, ''), // Enable this if backend doesn't have /api prefix
         },
