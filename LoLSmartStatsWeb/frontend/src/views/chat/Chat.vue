@@ -70,12 +70,10 @@ const options = reactive({
 })
 
 // 5.切换侧边栏状态
-// 切换侧边栏状态
 const toggleSidebar = () => {
   isSidebarOpen.value = !isSidebarOpen.value
 }
 
-// 点击外部区域关闭侧边栏
 const closeSidebar = () => {
   if (isSidebarOpen.value) {
     isSidebarOpen.value = false
@@ -98,68 +96,163 @@ const getOrCreateSessionId = () => {
   return currentSessionId.value
 }
 
-// --- 测试函数 ---
+// 辅助函数：解析SSE数据行
+const parseSSELine = (line: string): any | null => {
+  const trimmed = line.trim()
+  if (!trimmed || trimmed.length === 0) return null
 
-// 添加一个测试接口可用性的函数
-const testApiHealth = async () => {
-  try {
-    console.log('=== Testing API Health ===')
+  // 如果是以 data: 开头的行
+  if (trimmed.startsWith('data:')) {
+    const dataStr = trimmed.substring(5).trim()
+    if (!dataStr || dataStr.length === 0) return null
 
-    // 测试其他不需要认证的接口
-    const healthResponse = await fetch('/api/v1/auth/health', {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json'
-      }
-    })
-
-    console.log('Health endpoint status:', healthResponse.status)
-    if (healthResponse.ok) {
-      const healthData = await healthResponse.json()
-      console.log('Health data:', healthData)
+    try {
+      // 尝试解析JSON
+      const data = JSON.parse(dataStr)
+      return data
+    } catch (e) {
+      console.log('Not valid JSON, raw data:', dataStr)
+      // 如果不是JSON，返回原始文本
+      return { raw: dataStr }
     }
-
-    return healthResponse.status
-  } catch (err) {
-    console.error('Health check failed:', err)
-    return -1
   }
+
+  // 如果不是 data: 开头，尝试直接解析
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch (e) {
+      // 不是JSON，返回null
+    }
+  }
+
+  return null
 }
 
-// 添加一个测试认证状态的函数
-const testAuthStatus = async () => {
-  try {
-    const token = localStorage.getItem('accessToken')
-    if (!token) {
-      console.log('No token found')
-      return false
-    }
+// 辅助函数：提取比赛分析内容
+const extractMatchAnalysis = (data: any): string => {
+  if (!data) return ''
 
-    console.log('=== Testing Auth Status ===')
-    console.log('Token exists, length:', token.length)
+  // 处理 step 类型的数据
+  if (data.type === 'step' && data.detail && data.detail.output) {
+    const output = data.detail.output
 
-    // 测试需要认证的接口
-    const testResponse = await fetch('/api/v1/auth/me', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/json'
+    // 如果是搜索结果的output
+    if (data.detail.step === 'search' && typeof output === 'string') {
+      // 提取T1相关的比赛分析
+      const lines = output.split('\n')
+      const analysisLines: string[] = []
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        // 寻找包含T1比赛表现的内容，排除皮肤、视频等内容
+        if (trimmed.includes('T1') &&
+          (trimmed.includes('表现') || trimmed.includes('决赛') || trimmed.includes('战绩')) &&
+          !trimmed.includes('皮肤') &&
+          !trimmed.includes('冠军皮肤') &&
+          !trimmed.includes('Zeus') &&
+          !trimmed.includes('Oner') &&
+          !trimmed.includes('爆料人') &&
+          !trimmed.includes('Sheep Esports') &&
+          !trimmed.includes('【LOL终身成就】') &&
+          !trimmed.includes('视频纪念') &&
+          !trimmed.includes('#lol') &&
+          !trimmed.includes('views') &&
+          !trimmed.includes('K views')) {
+
+          // 清理内容
+          let cleanLine = trimmed
+            .replace(/\.\.\./g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+
+          if (cleanLine.length > 20) {
+            analysisLines.push(cleanLine)
+          }
+        }
       }
-    })
 
-    console.log('Auth test status:', testResponse.status)
-    if (testResponse.ok) {
-      const userData = await testResponse.json()
-      console.log('User data:', userData)
-      return true
-    } else {
-      console.log('Auth failed, status:', testResponse.status)
-      return false
+      if (analysisLines.length > 0) {
+        return analysisLines.join('\n')
+      }
     }
-  } catch (err) {
-    console.error('Auth test error:', err)
-    return false
+
+    // 如果是nl2sql的NO_SQL响应，跳过
+    if (data.detail.step === 'nl2sql') {
+      return ''
+    }
   }
+
+  // 如果是其他类型的output，尝试直接提取
+  if (typeof data === 'object') {
+    // 递归查找output字段
+    const findOutput = (obj: any): string => {
+      if (!obj) return ''
+
+      if (typeof obj === 'string') {
+        // 检查是否是比赛相关内容
+        if (obj.includes('T1') && obj.includes('表现') && obj.length > 30) {
+          return obj
+        }
+        return ''
+      }
+
+      if (Array.isArray(obj)) {
+        for (const item of obj) {
+          const result = findOutput(item)
+          if (result) return result
+        }
+      }
+
+      if (typeof obj === 'object') {
+        for (const key in obj) {
+          if (key === 'output' || key === 'answer' || key === 'content') {
+            const result = findOutput(obj[key])
+            if (result) return result
+          }
+        }
+      }
+
+      return ''
+    }
+
+    return findOutput(data)
+  }
+
+  return ''
+}
+
+// 辅助函数：过滤无用信息
+const filterAndExtractContent = (rawData: string): string => {
+  if (!rawData || typeof rawData !== 'string') return ''
+
+  // 分割成行
+  const lines = rawData.split('\n')
+  const usefulContent: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    // 解析SSE行
+    const parsedData = parseSSELine(trimmed)
+    if (parsedData) {
+      // 提取比赛分析内容
+      const analysis = extractMatchAnalysis(parsedData)
+      if (analysis) {
+        usefulContent.push(analysis)
+      }
+    }
+  }
+
+  if (usefulContent.length > 0) {
+    // 合并并去重
+    const combined = usefulContent.join('\n')
+    const uniqueLines = [...new Set(combined.split('\n').filter(line => line.trim().length > 0))]
+    return uniqueLines.join('\n')
+  }
+
+  return ''
 }
 
 // 登出函数
@@ -185,7 +278,7 @@ const handleLogout = () => {
 
 // --- 逻辑方法：会话管理 (CRUD) ---
 
-// 加载会话列表（优先从后端获取，失败时回退本地）
+// 加载会话列表
 const loadSessions = async () => {
   if (isLoggedIn.value) {
     try {
@@ -266,12 +359,10 @@ const deleteSession = async (sessionId: string) => {
     if (index !== -1) {
       sessions.value.splice(index, 1)
       saveSessions()
-      // 如果删除的是当前选中的
       if (currentSessionId.value === sessionId) {
         if (sessions.value.length > 0) {
           router.push({ query: { sessionId: sessions.value[0].id } })
         } else {
-          // 清空当前界面并移除ID
           currentSessionId.value = null
           messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
           router.replace({ query: {} })
@@ -282,7 +373,7 @@ const deleteSession = async (sessionId: string) => {
   } catch { }
 }
 
-// 全局点击处理（用于点击外部取消编辑）
+// 全局点击处理
 const handleDocumentClick = (e: MouseEvent) => {
   if (!editingSessionId.value) return
   const elVal = editContainer.value as unknown as HTMLElement | null
@@ -294,7 +385,6 @@ const handleDocumentClick = (e: MouseEvent) => {
     hasInteractedInside.value = true
     return
   }
-  // 点击外部：如果没有交互过直接取消，交互过可以尝试保存(或者也取消，看需求，这里选取消更安全)
   cancelEditing()
 }
 
@@ -367,7 +457,7 @@ const handleNewSession = async () => {
   }
 }
 
-// 发送消息
+// 发送消息 - 修正版本
 const handleSend = async () => {
   if (!userInput.value.trim() || loading.value) return
 
@@ -392,8 +482,6 @@ const handleSend = async () => {
   loading.value = true
 
   const ctrl = new AbortController()
-
-  // 【关键修复】获取或创建sessionId
   const sessionId = getOrCreateSessionId()
 
   const headers: Record<string, string> = {
@@ -401,15 +489,6 @@ const handleSend = async () => {
     'Accept': 'text/event-stream'
   }
 
-  // 【暂时注释掉 Authorization 头】让我们先测试不带认证的情况
-  // if (isLoggedIn.value) {
-  //   const token = localStorage.getItem('accessToken')
-  //   if (token && token.trim()) {
-  //     headers['Authorization'] = `Bearer ${token}`
-  //   }
-  // }
-
-  // 调试信息
   console.log('=== SSE Request Details ===')
   console.log('URL:', '/api/v1/chat/stream')
   console.log('Method: POST')
@@ -433,7 +512,7 @@ const handleSend = async () => {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({
-        sessionId: sessionId,  // 【重要】确保sessionId不为null
+        sessionId: sessionId,
         message: content,
         mode: 'data+analysis',
         context: {
@@ -449,7 +528,6 @@ const handleSend = async () => {
         console.log('Status:', response.status)
         console.log('Status Text:', response.statusText)
 
-        // 记录所有响应头
         console.log('Response Headers:')
         response.headers.forEach((value, key) => {
           console.log(`  ${key}: ${value}`)
@@ -460,7 +538,6 @@ const handleSend = async () => {
           return Promise.resolve()
         } else {
           console.error('Connection failed:', response.status, response.statusText)
-          // 尝试读取错误信息
           return response.text().then(text => {
             console.error('Error response body:', text || '(empty)')
             throw new Error(`HTTP ${response.status}: ${response.statusText} - ${text}`)
@@ -468,36 +545,20 @@ const handleSend = async () => {
         }
       },
       onmessage(msg) {
-        console.log('SSE Message:', msg.event, 'data length:', msg.data?.length)
-        if (msg.event === 'meta') {
-          const data = JSON.parse(msg.data)
-          console.log('Meta data:', data)
-          // 如果后端返回了新的 sessionId (冷启动会话)，更新本地
-          if (data.sessionId && data.sessionId !== currentSessionId.value) {
-            currentSessionId.value = data.sessionId
-            // 如果当前列表里没有这个ID（意味着是第一次自动创建），需要加进去
-            if (isLoggedIn.value && !sessions.value.find(s => s.id === data.sessionId)) {
-              sessions.value.unshift({ id: data.sessionId, name: data.title || '新对话' })
-              saveSessions()
-              // 更新 URL 但不刷新
-              router.replace({ query: { sessionId: data.sessionId } })
+        console.log('SSE Message event:', msg.event)
+        console.log('SSE Message data:', msg.data)
+
+        if (msg.data) {
+          // 使用新的过滤函数
+          const extractedContent = filterAndExtractContent(msg.data)
+          if (extractedContent && extractedContent.trim().length > 0) {
+            // 添加到消息内容，避免重复
+            const currentContent = messages.value[aiMsgIndex].content
+            if (!currentContent.includes(extractedContent)) {
+              messages.value[aiMsgIndex].content += extractedContent + '\n\n'
+              scrollToBottom()
             }
           }
-        } else if (msg.event === 'token') {
-          const data = JSON.parse(msg.data)
-          messages.value[aiMsgIndex].content += (data.delta || '')
-          scrollToBottom()
-        } else if (msg.event === 'data') {
-          const data = JSON.parse(msg.data)
-          if (!messages.value[aiMsgIndex].dataRefs) messages.value[aiMsgIndex].dataRefs = []
-          messages.value[aiMsgIndex].dataRefs?.push(data)
-        } else if (msg.event === 'done') {
-          loading.value = false
-          messages.value[aiMsgIndex].loading = false
-          console.log('SSE Stream completed')
-        } else if (msg.event === 'error') {
-          console.error('SSE Error event:', msg.data)
-          throw new Error(msg.data)
         }
       },
       onerror(err) {
@@ -506,6 +567,19 @@ const handleSend = async () => {
       },
       onclose() {
         console.log('SSE Connection closed')
+        loading.value = false
+        messages.value[aiMsgIndex].loading = false
+
+        // 如果没有任何内容，显示提示
+        if (messages.value[aiMsgIndex].content.trim().length === 0) {
+          messages.value[aiMsgIndex].content = '已收到响应，但未找到具体的比赛数据分析。\n\n这可能是因为：\n1. 当前为离线模式，无法访问详细数据\n2. 搜索结果主要包含皮肤发布等信息\n3. 请尝试更具体的查询，如"S14决赛T1的具体表现"'
+          scrollToBottom()
+        } else {
+          // 清理内容，移除多余空行
+          messages.value[aiMsgIndex].content = messages.value[aiMsgIndex].content
+            .replace(/\n{3,}/g, '\n\n')
+            .trim()
+        }
       }
     })
   } catch (err) {
@@ -514,11 +588,9 @@ const handleSend = async () => {
     loading.value = false
     messages.value[aiMsgIndex].loading = false
 
-    // 显示错误信息给用户
     if (err instanceof Error) {
       if (err.message.includes('403')) {
         ElMessage.error('访问被拒绝 (403)。如果已登录，请尝试退出重新登录。')
-        // 建议用户退出登录
         if (isLoggedIn.value) {
           setTimeout(() => {
             ElMessageBox.confirm(
@@ -547,6 +619,7 @@ const handleSend = async () => {
   }
 }
 
+// 加载上下文选项
 const loadContextOptions = async () => {
   try {
     const res: any = await dataApi.getOptions({}, ['tournaments', 'teams'])
@@ -567,7 +640,6 @@ const loadContextOptions = async () => {
     }
   } catch (e) {
     console.error('加载上下文筛选项失败', e)
-    // 设置默认值
     options.tournaments = [
       { label: 'S14 全球总决赛', value: 's14_worlds' },
       { label: 'LPL 夏季赛', value: 'lpl_summer_2024' }
@@ -589,28 +661,33 @@ watch(() => route.query.sessionId, (newId) => {
   if (isLoggedIn.value && currentSessionId.value) {
     fetchHistory()
   } else if (!currentSessionId.value) {
-    // 重置到初始状态
     messages.value = [{ role: 'assistant', content: '你好！我是你的 LoL 赛事数据助手。' }]
   }
 }, { immediate: true })
 
 onMounted(async () => {
-  // 清理可能的无效token
+  // 检查登录状态
   const token = localStorage.getItem('accessToken')
   if (token && token.trim()) {
-    // 测试 token 是否有效
-    const isValid = await testAuthStatus()
-    isLoggedIn.value = isValid
-
-    if (!isValid) {
-      console.log('Token invalid, clearing...')
-      localStorage.removeItem('accessToken')
+    try {
+      const response = await fetch('/api/v1/users/me', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json'
+        }
+      })
+      isLoggedIn.value = response.ok
+      if (!isLoggedIn.value) {
+        localStorage.removeItem('accessToken')
+        ElMessage.warning('登录状态已过期，请重新登录')
+      }
+    } catch (e) {
       isLoggedIn.value = false
-      ElMessage.warning('登录状态已过期，请重新登录')
+      localStorage.removeItem('accessToken')
     }
   } else {
     isLoggedIn.value = false
-    localStorage.removeItem('accessToken')
   }
 
   if (!isLoggedIn.value) {
@@ -622,67 +699,14 @@ onMounted(async () => {
   await loadContextOptions()
   document.addEventListener('pointerdown', handleDocumentClick, true)
 
-  // 初始化时生成一个临时sessionId
   if (!currentSessionId.value) {
     currentSessionId.value = generateTempSessionId()
     console.log('Initial temporary sessionId:', currentSessionId.value)
   }
 
-  // 测试 API 健康状态
   console.log('=== Initializing Chat Component ===')
-  await testApiHealth()
-
-  // 测试 SSE 连接（不使用认证）
-  const testHeaders = {
-    'Content-Type': 'application/json',
-    'Accept': 'text/event-stream'
-  }
-
-  // 先测试不带认证的请求
-  console.log('=== Testing SSE without auth ===')
-  const testNoAuth = await fetch('/api/v1/chat/stream', {
-    method: 'POST',
-    headers: testHeaders,
-    body: JSON.stringify({
-      sessionId: getOrCreateSessionId(),  // 测试时也要提供sessionId
-      message: 'test connection without auth',
-      mode: 'data+analysis'
-    })
-  })
-
-  console.log('SSE test without auth:', testNoAuth.status)
-
-  // 如果登录了，测试带认证的请求
-  if (isLoggedIn.value) {
-    const token = localStorage.getItem('accessToken')
-    if (token) {
-      console.log('=== Testing SSE with auth ===')
-      const testWithAuth = await fetch('/api/v1/chat/stream', {
-        method: 'POST',
-        headers: {
-          ...testHeaders,
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          sessionId: getOrCreateSessionId(),
-          message: 'test connection with auth',
-          mode: 'data+analysis'
-        })
-      })
-
-      console.log('SSE test with auth:', testWithAuth.status)
-
-      // 如果是403，尝试查看是否有错误信息
-      if (testWithAuth.status === 403) {
-        try {
-          const errorText = await testWithAuth.text()
-          console.log('403 error response:', errorText)
-        } catch (e) {
-          console.log('No error body in 403 response')
-        }
-      }
-    }
-  }
+  console.log('Login status:', isLoggedIn.value)
+  console.log('Current session ID:', currentSessionId.value)
 })
 
 onUnmounted(() => {
@@ -692,10 +716,8 @@ onUnmounted(() => {
 
 <template>
   <div class="flex h-full w-full bg-white">
-
     <!-- 1. 左侧：聊天主界面 -->
     <div class="flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300" @click="closeSidebar">
-
       <!-- Header -->
       <div
         class="flex-none bg-white border-b border-gray-100 px-8 py-5 flex items-center justify-between shrink-0 z-10">
@@ -872,18 +894,16 @@ onUnmounted(() => {
         </div>
       </div>
     </aside>
-
   </div>
 </template>
+
 <style scoped>
 /* 针对 Element Plus Textarea 的深度定制 */
 :deep(.custom-textarea .el-textarea__inner) {
   padding: 12px 16px;
   border-radius: 12px;
   background-color: #f9fafb;
-  /* gray-50 */
   border: 1px solid #e5e7eb;
-  /* gray-200 */
   box-shadow: none !important;
   transition: all 0.2s;
 }
@@ -891,7 +911,6 @@ onUnmounted(() => {
 :deep(.custom-textarea .el-textarea__inner:focus) {
   background-color: #ffffff;
   border-color: #3b82f6;
-  /* blue-500 */
   box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important;
 }
 

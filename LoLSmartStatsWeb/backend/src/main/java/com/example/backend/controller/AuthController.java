@@ -49,4 +49,16 @@ public class AuthController {
         data.put("ok", true);
         return ApiResponse.ok(data, TraceIdUtil.getOrCreate());
     }
+
+    /**
+     * 健康检查端点，用于前端测试API可用性
+     */
+    @GetMapping("/health")
+    public ApiResponse<Map<String, Object>> health() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("status", "UP");
+        data.put("service", "auth-service");
+        data.put("time", System.currentTimeMillis());
+        return ApiResponse.ok(data, TraceIdUtil.getOrCreate());
+    }
 }

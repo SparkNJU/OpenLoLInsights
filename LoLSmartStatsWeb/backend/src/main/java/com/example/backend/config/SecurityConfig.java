@@ -62,7 +62,12 @@ public class SecurityConfig {
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
                 throws ServletException, IOException {
+            String path = request.getRequestURI();
             String auth = request.getHeader(HttpHeaders.AUTHORIZATION);
+            
+            // 对 chat/stream 端点进行特殊处理：即使token无效也允许请求继续
+            boolean isChatStreamEndpoint = path.equals("/api/v1/chat/stream");
+            
             if (auth != null && auth.startsWith("Bearer ")) {
                 String token = auth.substring("Bearer ".length()).trim();
                 try {
@@ -75,8 +80,14 @@ public class SecurityConfig {
                     SecurityContextHolder.getContext().setAuthentication(a);
                 } catch (Exception ex) {
                     SecurityContextHolder.clearContext();
+                    
+                    // 如果是 chat/stream 端点，允许请求继续处理（让ChatController内部逻辑处理匿名情况）
+                    if (isChatStreamEndpoint) {
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
 
-                    // 关键：避免在 SSE 等已开始写响应时再抛 Spring Security 异常导致 response already committed
+                    // 其他端点：返回401错误
                     if (!response.isCommitted()) {
                         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                         response.setCharacterEncoding(StandardCharsets.UTF_8.name());

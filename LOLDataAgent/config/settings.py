@@ -20,6 +20,6 @@ class Settings:
     DB_PORT = os.getenv("DB_PORT", "3306")
     DB_NAME = os.getenv("DB_NAME", "lol_data")
     # Construct DATABASE_URL
-    DATABASE_URL = f'mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}' if DB_USER and DB_PASSWORD else None
+    DATABASE_URL = f'mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}' if DB_USER else None
     
 settings = Settings()
