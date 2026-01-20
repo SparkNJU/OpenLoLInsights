@@ -96,165 +96,74 @@ const getOrCreateSessionId = () => {
   return currentSessionId.value
 }
 
-// 辅助函数：解析SSE数据行
-const parseSSELine = (line: string): any | null => {
-  const trimmed = line.trim()
-  if (!trimmed || trimmed.length === 0) return null
-
-  // 如果是以 data: 开头的行
-  if (trimmed.startsWith('data:')) {
-    const dataStr = trimmed.substring(5).trim()
-    if (!dataStr || dataStr.length === 0) return null
-
-    try {
-      // 尝试解析JSON
-      const data = JSON.parse(dataStr)
-      return data
-    } catch (e) {
-      console.log('Not valid JSON, raw data:', dataStr)
-      // 如果不是JSON，返回原始文本
-      return { raw: dataStr }
-    }
-  }
-
-  // 如果不是 data: 开头，尝试直接解析
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      return JSON.parse(trimmed)
-    } catch (e) {
-      // 不是JSON，返回null
-    }
-  }
-
-  return null
-}
-
-// 辅助函数：提取比赛分析内容
-const extractMatchAnalysis = (data: any): string => {
-  if (!data) return ''
-
-  // 处理 step 类型的数据
-  if (data.type === 'step' && data.detail && data.detail.output) {
-    const output = data.detail.output
-
-    // 如果是搜索结果的output
-    if (data.detail.step === 'search' && typeof output === 'string') {
-      // 提取T1相关的比赛分析
-      const lines = output.split('\n')
-      const analysisLines: string[] = []
-
-      for (const line of lines) {
-        const trimmed = line.trim()
-        // 寻找包含T1比赛表现的内容，排除皮肤、视频等内容
-        if (trimmed.includes('T1') &&
-          (trimmed.includes('表现') || trimmed.includes('决赛') || trimmed.includes('战绩')) &&
-          !trimmed.includes('皮肤') &&
-          !trimmed.includes('冠军皮肤') &&
-          !trimmed.includes('Zeus') &&
-          !trimmed.includes('Oner') &&
-          !trimmed.includes('爆料人') &&
-          !trimmed.includes('Sheep Esports') &&
-          !trimmed.includes('【LOL终身成就】') &&
-          !trimmed.includes('视频纪念') &&
-          !trimmed.includes('#lol') &&
-          !trimmed.includes('views') &&
-          !trimmed.includes('K views')) {
-
-          // 清理内容
-          let cleanLine = trimmed
-            .replace(/\.\.\./g, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-
-          if (cleanLine.length > 20) {
-            analysisLines.push(cleanLine)
-          }
-        }
-      }
-
-      if (analysisLines.length > 0) {
-        return analysisLines.join('\n')
-      }
-    }
-
-    // 如果是nl2sql的NO_SQL响应，跳过
-    if (data.detail.step === 'nl2sql') {
-      return ''
-    }
-  }
-
-  // 如果是其他类型的output，尝试直接提取
-  if (typeof data === 'object') {
-    // 递归查找output字段
-    const findOutput = (obj: any): string => {
-      if (!obj) return ''
-
-      if (typeof obj === 'string') {
-        // 检查是否是比赛相关内容
-        if (obj.includes('T1') && obj.includes('表现') && obj.length > 30) {
-          return obj
-        }
-        return ''
-      }
-
-      if (Array.isArray(obj)) {
-        for (const item of obj) {
-          const result = findOutput(item)
-          if (result) return result
-        }
-      }
-
-      if (typeof obj === 'object') {
-        for (const key in obj) {
-          if (key === 'output' || key === 'answer' || key === 'content') {
-            const result = findOutput(obj[key])
-            if (result) return result
-          }
-        }
-      }
-
-      return ''
-    }
-
-    return findOutput(data)
-  }
-
-  return ''
-}
-
-// 辅助函数：过滤无用信息
+// 辅助函数：只提取搜索结果的output
+// 辅助函数：只提取搜索结果的output（修正版）
 const filterAndExtractContent = (rawData: string): string => {
   if (!rawData || typeof rawData !== 'string') return ''
 
-  // 分割成行
-  const lines = rawData.split('\n')
-  const usefulContent: string[] = []
+  // 检查是否是完整的事件行：event: xxx\ndata: {...}
+  if (rawData.includes('event:') && rawData.includes('data:')) {
+    // 尝试解析为JSON
+    try {
+      // 提取 data: 后面的部分
+      const dataMatch = rawData.match(/data:\s*({.*})/)
+      if (dataMatch && dataMatch[1]) {
+        const parsed = JSON.parse(dataMatch[1])
 
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
+        // 只处理 search 步骤的结果
+        if (parsed.type === 'step' &&
+          parsed.detail &&
+          parsed.detail.step === 'search' &&
+          parsed.detail.output) {
 
-    // 解析SSE行
-    const parsedData = parseSSELine(trimmed)
-    if (parsedData) {
-      // 提取比赛分析内容
-      const analysis = extractMatchAnalysis(parsedData)
-      if (analysis) {
-        usefulContent.push(analysis)
+          // 返回output内容
+          const output = parsed.detail.output
+          if (typeof output === 'string') {
+            // 简单清理：移除多余的空格和空行
+            return output
+              .replace(/\n+/g, '\n')
+              .replace(/\s+/g, ' ')
+              .replace(/\n\s*\n/g, '\n\n')
+              .trim()
+          }
+        }
       }
+    } catch (e) {
+      console.log('解析错误:', e, '原始数据:', rawData)
     }
   }
 
-  if (usefulContent.length > 0) {
-    // 合并并去重
-    const combined = usefulContent.join('\n')
-    const uniqueLines = [...new Set(combined.split('\n').filter(line => line.trim().length > 0))]
-    return uniqueLines.join('\n')
+  // 单独处理 data: 开头的行
+  if (rawData.startsWith('data:')) {
+    const content = rawData.substring(5).trim()
+    if (!content) return ''
+
+    try {
+      const parsed = JSON.parse(content)
+
+      // 只处理 search 步骤的结果
+      if (parsed.type === 'step' &&
+        parsed.detail &&
+        parsed.detail.step === 'search' &&
+        parsed.detail.output) {
+
+        // 返回output内容
+        const output = parsed.detail.output
+        if (typeof output === 'string') {
+          return output
+            .replace(/\n+/g, '\n')
+            .replace(/\s+/g, ' ')
+            .replace(/\n\s*\n/g, '\n\n')
+            .trim()
+        }
+      }
+    } catch (e) {
+      // 不是JSON，不显示
+    }
   }
 
   return ''
 }
-
 // 登出函数
 const handleLogout = () => {
   ElMessageBox.confirm(
@@ -549,15 +458,12 @@ const handleSend = async () => {
         console.log('SSE Message data:', msg.data)
 
         if (msg.data) {
-          // 使用新的过滤函数
+          // 使用新的过滤函数提取search步骤的output
           const extractedContent = filterAndExtractContent(msg.data)
           if (extractedContent && extractedContent.trim().length > 0) {
-            // 添加到消息内容，避免重复
-            const currentContent = messages.value[aiMsgIndex].content
-            if (!currentContent.includes(extractedContent)) {
-              messages.value[aiMsgIndex].content += extractedContent + '\n\n'
-              scrollToBottom()
-            }
+            // 直接替换内容（只显示search结果）
+            messages.value[aiMsgIndex].content = extractedContent
+            scrollToBottom()
           }
         }
       },
@@ -570,9 +476,9 @@ const handleSend = async () => {
         loading.value = false
         messages.value[aiMsgIndex].loading = false
 
-        // 如果没有任何内容，显示提示
+        // 如果没有提取到任何内容，显示简洁提示
         if (messages.value[aiMsgIndex].content.trim().length === 0) {
-          messages.value[aiMsgIndex].content = '已收到响应，但未找到具体的比赛数据分析。\n\n这可能是因为：\n1. 当前为离线模式，无法访问详细数据\n2. 搜索结果主要包含皮肤发布等信息\n3. 请尝试更具体的查询，如"S14决赛T1的具体表现"'
+          messages.value[aiMsgIndex].content = '本次查询没有获取到相关比赛数据。'
           scrollToBottom()
         } else {
           // 清理内容，移除多余空行
